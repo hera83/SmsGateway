@@ -1,0 +1,277 @@
+@model web.Models.Subscriptions.SubscriptionsIndexViewModel
+
+@{
+    ViewData["Title"] = "Abonnementer";
+    var success = TempData["Success"] as string;
+    var error = TempData["Error"] as string;
+    var keyMap = Model.ApiKeys.ToDictionary(k => k.Id, k => k.Name);
+}
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <div class="alert alert-danger mb-4">@error</div>
+}
+@if (!string.IsNullOrEmpty(success))
+{
+    <div class="alert mb-4" style="background:rgba(16,163,127,0.15);border:1px solid rgba(16,163,127,0.3);color:#34d399;border-radius:var(--radius);font-size:13px;">@success</div>
+}
+
+<div class="d-flex justify-content-between align-items-end mb-4 gap-3 flex-wrap">
+    <form asp-action="Index" method="get" class="d-flex gap-2 flex-wrap align-items-end">
+        <div>
+            <label class="form-label mb-1" style="font-size:12px;color:var(--text-muted);">Telefonnummer</label>
+            <input name="filterPhoneNumber" class="form-control form-control-sm" style="width:160px;"
+                   placeholder="f.eks. 12345678" value="@Model.FilterPhoneNumber" />
+        </div>
+        <div>
+            <label class="form-label mb-1" style="font-size:12px;color:var(--text-muted);">Status</label>
+            <select name="filterIsActive" class="form-select form-select-sm" style="width:130px;">
+                <option value="" selected="@(Model.FilterIsActive == null)">Alle</option>
+                <option value="active" selected="@(Model.FilterIsActive == "active")">Aktive</option>
+                <option value="inactive" selected="@(Model.FilterIsActive == "inactive")">Inaktive</option>
+            </select>
+        </div>
+        <div>
+            <label class="form-label mb-1" style="font-size:12px;color:var(--text-muted);">API-nøgle</label>
+            <select name="filterApiKeyId" class="form-select form-select-sm" style="width:180px;">
+                <option value="">Alle nøgler</option>
+                @foreach (var key in Model.ApiKeys)
+                {
+                    <option value="@key.Id" selected="@(Model.FilterApiKeyId == key.Id)">@key.Name</option>
+                }
+            </select>
+        </div>
+        <div class="d-flex gap-1 align-self-end">
+            <button type="submit" class="btn btn-secondary btn-sm">Søg</button>
+            @if (!string.IsNullOrEmpty(Model.FilterPhoneNumber) || Model.FilterIsActive != null || Model.FilterApiKeyId.HasValue)
+            {
+                <a asp-action="Index" class="btn btn-secondary btn-sm">Nulstil</a>
+            }
+        </div>
+    </form>
+    <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#createModal">+ Nyt abonnement</button>
+</div>
+
+<div class="card">
+    <div class="card-header">Abonnementer (@Model.Subscriptions.Count)</div>
+    <div class="card-body p-0">
+        <table class="table table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>API-nøgle</th>
+                    <th>Telefonnumre</th>
+                    <th>Periode</th>
+                    <th>Status</th>
+                    <th>Webhook</th>
+                    <th>Oprettet</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var sub in Model.Subscriptions)
+                {
+                    var keyName = keyMap.TryGetValue(sub.ApiKeyId, out var n) ? n : sub.ApiKeyId.ToString("N")[..8] + "…";
+                    var numbersDisplay = string.Join(", ", sub.PhoneNumbers);
+                    var numbersRaw = string.Join("\n", sub.PhoneNumbers);
+                    <tr>
+                        <td>
+                            <span class="fw-500">@keyName</span>
+                        </td>
+                        <td style="font-size:12px;max-width:220px;">
+                            @if (sub.PhoneNumbers.Count <= 3)
+                            {
+                                @numbersDisplay
+                            }
+                            else
+                            {
+                                @string.Join(", ", sub.PhoneNumbers.Take(3))
+                                <span style="color:var(--text-muted);"> +@(sub.PhoneNumbers.Count - 3) mere</span>
+                            }
+                        </td>
+                        <td style="white-space:nowrap;font-size:13px;">
+                            @sub.StartDate.ToString("dd/MM/yyyy") – @sub.EndDate.ToString("dd/MM/yyyy")
+                        </td>
+                        <td>
+                            @if (sub.IsActive)
+                            {
+                                <span class="badge-soft badge-soft-success">Aktiv</span>
+                            }
+                            else if (sub.EndDate < DateOnly.FromDateTime(DateTime.Now))
+                            {
+                                <span class="badge-soft badge-soft-danger">Udløbet</span>
+                            }
+                            else
+                            {
+                                <span class="badge-soft badge-soft-warning">Fremtidig</span>
+                            }
+                        </td>
+                        <td style="font-size:12px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="@sub.WebhookUrl">
+                            @(sub.WebhookUrl ?? "–")
+                        </td>
+                        <td style="color:var(--text-muted);font-size:12px;white-space:nowrap;">
+                            @sub.CreatedAt.ToString("dd/MM/yyyy HH:mm")
+                        </td>
+                        <td class="text-end" style="white-space:nowrap;">
+                            <button class="btn btn-secondary btn-sm"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#editModal"
+                                    data-id="@sub.Id"
+                                    data-numbers="@numbersRaw"
+                                    data-startdate="@sub.StartDate.ToString("yyyy-MM-dd")"
+                                    data-enddate="@sub.EndDate.ToString("yyyy-MM-dd")"
+                                    data-webhook="@sub.WebhookUrl">
+                                Rediger
+                            </button>
+                            <button class="btn btn-danger btn-sm"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#deleteModal"
+                                    data-id="@sub.Id"
+                                    data-keyname="@keyName">
+                                Slet
+                            </button>
+                        </td>
+                    </tr>
+                }
+                @if (!Model.Subscriptions.Any())
+                {
+                    <tr><td colspan="7" class="text-center" style="color:var(--text-muted);padding:32px;">Ingen abonnementer fundet.</td></tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Create Modal -->
+<div class="modal fade" id="createModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content" style="background:var(--bg-surface);border:1px solid var(--border);">
+            <form asp-action="Create" method="post">
+                @Html.AntiForgeryToken()
+                <div class="modal-header" style="border-color:var(--border);">
+                    <h5 class="modal-title" style="color:var(--text-primary);">Nyt abonnement</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">API-nøgle</label>
+                        <select name="ApiKeyId" class="form-select" required>
+                            <option value="">Vælg nøgle…</option>
+                            @foreach (var key in Model.ApiKeys)
+                            {
+                                <option value="@key.Id">@key.Name</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Telefonnumre <span style="color:var(--text-muted);font-size:12px;">(ét pr. linje, 8 cifre)</span></label>
+                        <textarea name="PhoneNumbersRaw" class="form-control" rows="4" required
+                                  placeholder="12345678&#10;87654321"></textarea>
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col">
+                            <label class="form-label">Startdato</label>
+                            <input name="StartDate" type="date" class="form-control" required
+                                   value="@DateTime.Now.ToString("yyyy-MM-dd")" />
+                        </div>
+                        <div class="col">
+                            <label class="form-label">Slutdato</label>
+                            <input name="EndDate" type="date" class="form-control" required />
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Webhook URL <span style="color:var(--text-muted);font-size:12px;">(valgfri)</span></label>
+                        <input name="WebhookUrl" type="url" class="form-control" placeholder="https://..." />
+                    </div>
+                </div>
+                <div class="modal-footer" style="border-color:var(--border);">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuller</button>
+                    <button type="submit" class="btn btn-primary">Opret</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Modal -->
+<div class="modal fade" id="editModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content" style="background:var(--bg-surface);border:1px solid var(--border);">
+            <form asp-action="Edit" method="post">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="Id" id="editId" />
+                <div class="modal-header" style="border-color:var(--border);">
+                    <h5 class="modal-title" style="color:var(--text-primary);">Rediger abonnement</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Telefonnumre <span style="color:var(--text-muted);font-size:12px;">(ét pr. linje, 8 cifre)</span></label>
+                        <textarea name="PhoneNumbersRaw" id="editNumbers" class="form-control" rows="4" required></textarea>
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col">
+                            <label class="form-label">Startdato</label>
+                            <input name="StartDate" id="editStartDate" type="date" class="form-control" required />
+                        </div>
+                        <div class="col">
+                            <label class="form-label">Slutdato</label>
+                            <input name="EndDate" id="editEndDate" type="date" class="form-control" required />
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Webhook URL <span style="color:var(--text-muted);font-size:12px;">(valgfri)</span></label>
+                        <input name="WebhookUrl" id="editWebhook" type="url" class="form-control" placeholder="https://..." />
+                    </div>
+                </div>
+                <div class="modal-footer" style="border-color:var(--border);">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuller</button>
+                    <button type="submit" class="btn btn-primary">Gem</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content" style="background:var(--bg-surface);border:1px solid var(--border);">
+            <form asp-action="Delete" method="post">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="id" id="deleteId" />
+                <div class="modal-header" style="border-color:var(--border);">
+                    <h5 class="modal-title" style="color:var(--text-primary);">Slet abonnement</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p style="color:var(--text-secondary);">
+                        Er du sikker på at du vil slette abonnementet for <strong id="deleteKeyName"></strong>?
+                        Alle tilknyttede numre mister adgang. Denne handling kan ikke fortrydes.
+                    </p>
+                </div>
+                <div class="modal-footer" style="border-color:var(--border);">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuller</button>
+                    <button type="submit" class="btn btn-danger">Slet</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+<script>
+    document.getElementById('editModal').addEventListener('show.bs.modal', function (e) {
+        const btn = e.relatedTarget;
+        document.getElementById('editId').value = btn.dataset.id;
+        document.getElementById('editNumbers').value = btn.dataset.numbers;
+        document.getElementById('editStartDate').value = btn.dataset.startdate;
+        document.getElementById('editEndDate').value = btn.dataset.enddate;
+        document.getElementById('editWebhook').value = btn.dataset.webhook || '';
+    });
+    document.getElementById('deleteModal').addEventListener('show.bs.modal', function (e) {
+        const btn = e.relatedTarget;
+        document.getElementById('deleteId').value = btn.dataset.id;
+        document.getElementById('deleteKeyName').textContent = btn.dataset.keyname;
+    });
+</script>
+}

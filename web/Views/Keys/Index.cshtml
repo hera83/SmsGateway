@@ -1,0 +1,261 @@
+@model web.Models.Keys.KeysIndexViewModel
+
+@{
+    ViewData["Title"] = "API-nøgler";
+    var newKey = TempData["NewApiKey"] as string;
+    var success = TempData["Success"] as string;
+    var error = TempData["Error"] as string;
+}
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <div class="alert alert-danger mb-4">@error</div>
+}
+@if (!string.IsNullOrEmpty(success))
+{
+    <div class="alert mb-4" style="background:rgba(16,163,127,0.15);border:1px solid rgba(16,163,127,0.3);color:#34d399;border-radius:var(--radius);font-size:13px;">
+        @success
+    </div>
+}
+@if (!string.IsNullOrEmpty(newKey))
+{
+    <div class="alert mb-4" style="background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.3);color:#fbbf24;border-radius:var(--radius);font-size:13px;">
+        <strong>Ny API-nøgle (kopiér nu — vises kun én gang):</strong><br />
+        <code style="font-size:13px;word-break:break-all;">@newKey</code>
+    </div>
+}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <p style="color:var(--text-secondary);font-size:13px;margin:0;">Administrer API-nøgler til SMS Gateway.</p>
+    <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#createModal">+ Ny nøgle</button>
+</div>
+
+<div class="card">
+    <div class="card-header">Nøgler (@Model.Keys.Count)</div>
+    <div class="card-body p-0">
+        <table class="table table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Navn</th>
+                    <th>Saldo</th>
+                    <th>Status</th>
+                    <th>Ansvarlig</th>
+                    <th>Oprettet</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var key in Model.Keys)
+                {
+                    <tr>
+                        <td><span class="fw-500">@key.Name</span></td>
+                        <td>@key.Balance.ToString("N2") kr.</td>
+                        <td>
+                            @if (key.IsActive)
+                            {
+                                <span class="badge-soft badge-soft-success">Aktiv</span>
+                            }
+                            else
+                            {
+                                <span class="badge-soft badge-soft-danger">Inaktiv</span>
+                            }
+                        </td>
+                        <td>
+                            <div>@key.ResponsibleName</div>
+                            <div style="color:var(--text-muted);font-size:12px;">@key.ResponsibleEmail</div>
+                        </td>
+                        <td style="color:var(--text-muted);">@key.CreatedAt.ToString("dd/MM/yyyy HH:mm")</td>
+                        <td class="text-end">
+                            <button class="btn btn-secondary btn-sm"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#editModal"
+                                    data-id="@key.Id"
+                                    data-name="@key.Name"
+                                    data-isactive="@key.IsActive.ToString().ToLower()"
+                                    data-balance="@key.Balance"
+                                    data-responsiblename="@key.ResponsibleName"
+                                    data-responsibleemail="@key.ResponsibleEmail">
+                                Rediger
+                            </button>
+                            <button class="btn btn-secondary btn-sm"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#rolloverModal"
+                                    data-id="@key.Id"
+                                    data-name="@key.Name">
+                                Rollover
+                            </button>
+                            <button class="btn btn-danger btn-sm"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#deleteModal"
+                                    data-id="@key.Id"
+                                    data-name="@key.Name">
+                                Slet
+                            </button>
+                        </td>
+                    </tr>
+                }
+                @if (!Model.Keys.Any())
+                {
+                    <tr><td colspan="6" class="text-center" style="color:var(--text-muted);padding:32px;">Ingen nøgler oprettet endnu.</td></tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Create Modal -->
+<div class="modal fade" id="createModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content" style="background:var(--bg-surface);border:1px solid var(--border);">
+            <form asp-action="Create" method="post">
+                @Html.AntiForgeryToken()
+                <div class="modal-header" style="border-color:var(--border);">
+                    <h5 class="modal-title" style="color:var(--text-primary);">Ny API-nøgle</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Navn</label>
+                        <input name="Name" class="form-control" required placeholder="f.eks. Kundenavn" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Saldo (DKK)</label>
+                        <input name="Balance" type="number" step="0.01" min="0" class="form-control" value="0" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Ansvarlig navn</label>
+                        <input name="ResponsibleName" class="form-control" required />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Ansvarlig e-mail</label>
+                        <input name="ResponsibleEmail" type="email" class="form-control" required />
+                    </div>
+                </div>
+                <div class="modal-footer" style="border-color:var(--border);">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuller</button>
+                    <button type="submit" class="btn btn-primary">Opret</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Modal -->
+<div class="modal fade" id="editModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content" style="background:var(--bg-surface);border:1px solid var(--border);">
+            <form asp-action="Edit" method="post">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="Id" id="editId" />
+                <div class="modal-header" style="border-color:var(--border);">
+                    <h5 class="modal-title" style="color:var(--text-primary);">Rediger API-nøgle</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Navn</label>
+                        <input name="Name" id="editName" class="form-control" required />
+                    </div>
+                    <div class="mb-3 form-check">
+                        <input name="IsActive" id="editIsActive" type="checkbox" value="true" class="form-check-input" />
+                        <label class="form-check-label" for="editIsActive">Aktiv</label>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Saldo (DKK)</label>
+                        <input name="Balance" id="editBalance" type="number" step="any" min="0" class="form-control" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Ansvarlig navn</label>
+                        <input name="ResponsibleName" id="editResponsibleName" class="form-control" required />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Ansvarlig e-mail</label>
+                        <input name="ResponsibleEmail" id="editResponsibleEmail" type="email" class="form-control" required />
+                    </div>
+                </div>
+                <div class="modal-footer" style="border-color:var(--border);">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuller</button>
+                    <button type="submit" class="btn btn-primary">Gem</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Rollover Modal -->
+<div class="modal fade" id="rolloverModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content" style="background:var(--bg-surface);border:1px solid var(--border);">
+            <form asp-action="Rollover" method="post">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="id" id="rolloverId" />
+                <div class="modal-header" style="border-color:var(--border);">
+                    <h5 class="modal-title" style="color:var(--text-primary);">Rollover API-nøgle</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p style="color:var(--text-secondary);">
+                        Er du sikker på at du vil generere en ny API-nøgle for <strong id="rolloverName"></strong>?
+                        Den nuværende nøgle vil blive ugyldiggjort.
+                    </p>
+                </div>
+                <div class="modal-footer" style="border-color:var(--border);">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuller</button>
+                    <button type="submit" class="btn btn-primary">Generer ny nøgle</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content" style="background:var(--bg-surface);border:1px solid var(--border);">
+            <form asp-action="Delete" method="post">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="id" id="deleteId" />
+                <div class="modal-header" style="border-color:var(--border);">
+                    <h5 class="modal-title" style="color:var(--text-primary);">Slet API-nøgle</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p style="color:var(--text-secondary);">
+                        Er du sikker på at du vil slette <strong id="deleteName"></strong>? Denne handling kan ikke fortrydes.
+                    </p>
+                </div>
+                <div class="modal-footer" style="border-color:var(--border);">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuller</button>
+                    <button type="submit" class="btn btn-danger">Slet</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+<script>
+    // Edit modal
+    document.getElementById('editModal').addEventListener('show.bs.modal', function (e) {
+        const btn = e.relatedTarget;
+        document.getElementById('editId').value = btn.dataset.id;
+        document.getElementById('editName').value = btn.dataset.name;
+        document.getElementById('editIsActive').checked = btn.dataset.isactive === 'true';
+        document.getElementById('editBalance').value = btn.dataset.balance;
+        document.getElementById('editResponsibleName').value = btn.dataset.responsiblename;
+        document.getElementById('editResponsibleEmail').value = btn.dataset.responsibleemail;
+    });
+    // Rollover modal
+    document.getElementById('rolloverModal').addEventListener('show.bs.modal', function (e) {
+        const btn = e.relatedTarget;
+        document.getElementById('rolloverId').value = btn.dataset.id;
+        document.getElementById('rolloverName').textContent = btn.dataset.name;
+    });
+    // Delete modal
+    document.getElementById('deleteModal').addEventListener('show.bs.modal', function (e) {
+        const btn = e.relatedTarget;
+        document.getElementById('deleteId').value = btn.dataset.id;
+        document.getElementById('deleteName').textContent = btn.dataset.name;
+    });
+</script>
+}

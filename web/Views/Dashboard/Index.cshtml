@@ -1,0 +1,153 @@
+@model web.Models.Dashboard.DashboardViewModel
+
+@{
+    ViewData["Title"] = "Dashboard";
+    var health = Model.Health;
+    var device = Model.DeviceInfo;
+    var monthlyUsage = Model.MonthlyUsage;
+    var cost = Model.CurrentCost;
+    var usage = Model.UsageReport;
+}
+
+<p style="color:var(--text-secondary);font-size:13px;margin-bottom:24px;">Oversigt over SMS Gateway aktivitet.</p>
+
+<!-- Stat Cards Row -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="stat-card-label">API Status</div>
+            @if (health is not null)
+            {
+                <div class="stat-card-value" style="font-size:18px;">
+                    <span class="badge-soft badge-soft-success">@health.Status</span>
+                </div>
+                <div class="stat-card-sub">@health.Timestamp.ToString("dd/MM/yyyy HH:mm")</div>
+            }
+            else
+            {
+                <div class="stat-card-value" style="font-size:18px;">
+                    <span class="badge-soft badge-soft-danger">Offline</span>
+                </div>
+                <div class="stat-card-sub">Ingen forbindelse</div>
+            }
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="stat-card-label">Forbrug denne måned</div>
+            <div class="stat-card-value">@(monthlyUsage?.TotalUsageDkk.ToString("N2") ?? "–") kr.</div>
+            <div class="stat-card-sub">@(monthlyUsage?.TotalCount.ToString("N0") ?? "–") SMS afsendt</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="stat-card-label">SMS sendt (30 dage)</div>
+            <div class="stat-card-value">@(usage?.TotalCount.ToString("N0") ?? "–")</div>
+            <div class="stat-card-sub">Forbrug: @(usage?.TotalUsageDkk.ToString("N2") ?? "–") kr.</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="stat-card-label">Pris pr. SMS</div>
+            <div class="stat-card-value">@(cost?.SmsPriceDkk.ToString("N4") ?? "–") kr.</div>
+            <div class="stat-card-sub">Opdateret: @(cost?.UpdatedAt.ToString("dd/MM HH:mm") ?? "–")</div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4">
+    <!-- Device Info -->
+    <div class="col-md-5">
+        <div class="card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Enhedsinformation</span>
+                <a asp-controller="Sms" asp-action="Index" style="font-size:12px;color:var(--text-muted);">Se SMS →</a>
+            </div>
+            <div class="card-body">
+                @if (device is not null)
+                {
+                    <table style="width:100%;font-size:13px;border-collapse:collapse;">
+                        <tr>
+                            <td style="color:var(--text-muted);padding:6px 0;width:45%;">Enhed</td>
+                            <td>@device.Manufacturer @device.Model</td>
+                        </tr>
+                        <tr>
+                            <td style="color:var(--text-muted);padding:6px 0;">Firmware</td>
+                            <td>@device.Revision</td>
+                        </tr>
+                        <tr>
+                            <td style="color:var(--text-muted);padding:6px 0;">Telefonnummer</td>
+                            <td>@(device.PhoneNumber ?? "–")</td>
+                        </tr>
+                        <tr>
+                            <td style="color:var(--text-muted);padding:6px 0;">Operatør</td>
+                            <td>@(device.OperatorName ?? "–")</td>
+                        </tr>
+                        <tr>
+                            <td style="color:var(--text-muted);padding:6px 0;">Signal</td>
+                            <td>@(device.SignalQuality?.ToString() ?? "–") dBm</td>
+                        </tr>
+                        <tr>
+                            <td style="color:var(--text-muted);padding:6px 0;">Netværk</td>
+                            <td>@(device.NetworkRegistration ?? "–")</td>
+                        </tr>
+                        <tr>
+                            <td style="color:var(--text-muted);padding:6px 0;">SMS Center</td>
+                            <td>@(device.SmsCenterNumber ?? "–")</td>
+                        </tr>
+                        <tr>
+                            <td style="color:var(--text-muted);padding:6px 0;">IMEI</td>
+                            <td style="font-size:12px;">@device.Imei</td>
+                        </tr>
+                    </table>
+                }
+                else
+                {
+                    <p style="color:var(--text-muted);font-size:13px;">Enhedsinfo ikke tilgængelig.</p>
+                }
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Errors -->
+    <div class="col-md-7">
+        <div class="card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Seneste fejl</span>
+                <a asp-controller="Logs" asp-action="Index" asp-route-Level="Error" style="font-size:12px;color:var(--text-muted);">Se alle →</a>
+            </div>
+            <div class="card-body p-0">
+                @if (Model.RecentErrors.Any())
+                {
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>Tidspunkt</th>
+                                <th>Besked</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var log in Model.RecentErrors)
+                            {
+                                <tr>
+                                    <td style="color:var(--text-muted);font-size:12px;white-space:nowrap;">
+                                        @log.Timestamp.ToString("dd/MM HH:mm:ss")
+                                    </td>
+                                    <td style="max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="@log.Message">
+                                        @log.Message
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+                else
+                {
+                    <div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px;">
+                        ✓ Ingen fejl registreret.
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>

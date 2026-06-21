@@ -1,0 +1,35 @@
+@model ErrorViewModel
+
+@{
+    ViewData["Title"] = Model.Title;
+    Layout = "_AuthLayout";
+}
+
+<div class="auth-card text-center">
+    <div style="font-size: 56px; line-height: 1; margin-bottom: 16px; opacity: 0.4;">
+        @(Model.StatusCode switch {
+            404 => "🔍",
+            403 => "🚫",
+            401 => "🔒",
+            _   => "⚠️"
+        })
+    </div>
+
+    <div style="font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); margin-bottom: 8px;">
+        Fejl @Model.StatusCode
+    </div>
+
+    <h2 class="auth-title">@Model.Title</h2>
+    <p class="auth-subtitle">@Model.Description</p>
+
+    @if (Model.ShowRequestId)
+    {
+        <p style="font-size: 11px; color: var(--text-muted); font-family: monospace; margin-bottom: 24px;">
+            Request ID: @Model.RequestId
+        </p>
+    }
+
+    <a asp-controller="Home" asp-action="Index" class="btn btn-primary w-100">
+        Tilbage til forsiden
+    </a>
+</div>

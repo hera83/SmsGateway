@@ -1,0 +1,51 @@
+# Configuration for ports, the serial device and secrets lives in .env
+# (copy .env.example -> .env and edit it). Changing .env never requires
+# editing this file or rebuilding images — just `docker compose up -d`.
+services:
+  smsapp:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    image: sms-gateway-api:latest
+    container_name: sms-gateway-api
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-5000}:8080"
+    devices:
+      # Host TTY (e.g. the Teltonika TRM240's USB-serial device) mapped to a
+      # fixed in-container path. SERIAL_DEVICE/SERIAL_PORT come from .env;
+      # SERIAL_PORT below must match the container side of this mapping.
+      - "${SERIAL_DEVICE:-/dev/ttyUSB2}:${SERIAL_PORT:-/dev/COM1}"
+    environment:
+      SERIAL_PORT: ${SERIAL_PORT:-/dev/COM1}
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      Security__MasterKey: ${MASTER_KEY}
+    volumes:
+      # Persist the SQLite database across container restarts/upgrades.
+      - ./api/App_dbs:/app/App_dbs
+    # Uncomment if the host's serial device group GID does not match the
+    # "dialout" group baked into the image (see README.md, section "Non-root
+    # permissions"). Replace 20 with `getent group dialout` (or the device's
+    # actual owning group) on the host.
+    # group_add:
+    #   - "20"
+
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    image: sms-gateway-web:latest
+    container_name: sms-gateway-web
+    restart: unless-stopped
+    depends_on:
+      - smsapp
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      # "smsapp" resolves via Docker's internal DNS to the api container;
+      # 8080 here is the container-internal port, not the host-mapped API_PORT.
+      SmsService__Url: http://smsapp:8080
+      SmsService__MasterKey: ${MASTER_KEY}
+    volumes:
+      - ./web/App_dbs:/app/App_dbs

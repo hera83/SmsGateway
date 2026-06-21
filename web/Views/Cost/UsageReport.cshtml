@@ -1,0 +1,165 @@
+@model web.Models.Cost.CostUsageReportViewModel
+
+@{
+    ViewData["Title"] = "Forbrugsrapport";
+    var result = Model.Result;
+    int totalPages = result is null ? 1 : (int)Math.Ceiling((double)result.TotalCount / Model.PageSize);
+}
+
+<div class="card mb-4">
+    <div class="card-header">Filter</div>
+    <div class="card-body">
+        <form asp-action="UsageReport" method="get" class="row g-3">
+            <div class="col-md-2">
+                <label class="form-label">Fra dato</label>
+                <input name="CreatedFrom" type="datetime-local" class="form-control"
+                       value="@(Model.CreatedFrom?.ToString("yyyy-MM-ddTHH:mm") ?? "")" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Til dato</label>
+                <input name="CreatedTo" type="datetime-local" class="form-control"
+                       value="@(Model.CreatedTo?.ToString("yyyy-MM-ddTHH:mm") ?? "")" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Status</label>
+                <select name="Status" class="form-select">
+                    <option value="">Alle</option>
+                    <option value="Sent" selected="@(Model.Status == "Sent")">Sent</option>
+                    <option value="Delivered" selected="@(Model.Status == "Delivered")">Delivered</option>
+                    <option value="Failed" selected="@(Model.Status == "Failed")">Failed</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Telefonnummer</label>
+                <input name="ToPhoneNumber" class="form-control" value="@Model.ToPhoneNumber" placeholder="8 cifre" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Besked indeholder</label>
+                <input name="MessageContains" class="form-control" value="@Model.MessageContains" />
+            </div>
+            <div class="col-md-1">
+                <label class="form-label">Størrelse</label>
+                <input name="PageSize" type="number" min="10" max="200" class="form-control" value="@Model.PageSize" />
+            </div>
+            <div class="col-md-1 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary w-100">Søg</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+@if (result is not null)
+{
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-card-label">Resultater</div>
+                <div class="stat-card-value">@result.TotalCount</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-card-label">Samlet forbrug</div>
+                <div class="stat-card-value">@result.TotalUsageDkk.ToString("N2") kr.</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-card-label">Side</div>
+                <div class="stat-card-value">@result.PageNumber / @totalPages</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">SMS-forbrug</div>
+        <div class="card-body p-0">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>Tidspunkt</th>
+                        <th>Nøgle</th>
+                        <th>Modtager</th>
+                        <th>Besked</th>
+                        <th>Status</th>
+                        <th>Segmenter</th>
+                        <th>Enhedspris</th>
+                        <th>Total</th>
+                        <th>Trukket</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var item in result.Items)
+                    {
+                        <tr>
+                            <td style="color:var(--text-muted);white-space:nowrap;">@item.CreatedAt.ToString("dd/MM/yyyy HH:mm")</td>
+                            <td style="color:var(--text-muted);font-size:12px;">@(item.ApiKeyName ?? "—")</td>
+                            <td>@item.ToPhoneNumber</td>
+                            <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="@item.Message">@item.Message</td>
+                            <td>
+                                @{
+                                    var badgeClass = item.Status switch
+                                    {
+                                        "Delivered" => "badge-soft-success",
+                                        "Sent" => "badge-soft-info",
+                                        "Failed" => "badge-soft-danger",
+                                        _ => "badge-soft-warning"
+                                    };
+                                }
+                                <span class="badge-soft @badgeClass">@item.Status</span>
+                            </td>
+                            <td>@item.SegmentCount</td>
+                            <td>@item.UnitPriceDkk.ToString("N4") kr.</td>
+                            <td>@item.TotalPriceDkk.ToString("N4") kr.</td>
+                            <td>
+                                @if (item.IsBalanceDeducted)
+                                {
+                                    <span class="badge-soft badge-soft-success">Ja</span>
+                                }
+                                else
+                                {
+                                    <span class="badge-soft badge-soft-danger">Nej</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                    @if (!result.Items.Any())
+                    {
+                        <tr><td colspan="9" class="text-center" style="color:var(--text-muted);padding:32px;">Ingen resultater.</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    @if (totalPages > 1)
+    {
+        <div class="d-flex gap-2 justify-content-center mt-4">
+            @if (Model.PageNumber > 1)
+            {
+                <a asp-action="UsageReport" asp-all-route-data='@(new Dictionary<string, string?> {
+                    ["PageNumber"] = (Model.PageNumber - 1).ToString(),
+                    ["PageSize"] = Model.PageSize.ToString(),
+                    ["Status"] = Model.Status,
+                    ["ToPhoneNumber"] = Model.ToPhoneNumber,
+                    ["MessageContains"] = Model.MessageContains,
+                    ["CreatedFrom"] = Model.CreatedFrom?.ToString("yyyy-MM-ddTHH:mm"),
+                    ["CreatedTo"] = Model.CreatedTo?.ToString("yyyy-MM-ddTHH:mm")
+                })' class="btn btn-secondary btn-sm">← Forrige</a>
+            }
+            <span style="color:var(--text-muted);align-self:center;font-size:13px;">Side @Model.PageNumber af @totalPages</span>
+            @if (Model.PageNumber < totalPages)
+            {
+                <a asp-action="UsageReport" asp-all-route-data='@(new Dictionary<string, string?> {
+                    ["PageNumber"] = (Model.PageNumber + 1).ToString(),
+                    ["PageSize"] = Model.PageSize.ToString(),
+                    ["Status"] = Model.Status,
+                    ["ToPhoneNumber"] = Model.ToPhoneNumber,
+                    ["MessageContains"] = Model.MessageContains,
+                    ["CreatedFrom"] = Model.CreatedFrom?.ToString("yyyy-MM-ddTHH:mm"),
+                    ["CreatedTo"] = Model.CreatedTo?.ToString("yyyy-MM-ddTHH:mm")
+                })' class="btn btn-secondary btn-sm">Næste →</a>
+            }
+        </div>
+    }
+}

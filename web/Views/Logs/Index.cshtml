@@ -1,0 +1,134 @@
+@model web.Models.Logs.LogsIndexViewModel
+
+@{
+    ViewData["Title"] = "Logs";
+    var result = Model.Result;
+    int totalPages = result is null ? 1 : (int)Math.Ceiling((double)result.Total / Model.PageSize);
+}
+
+<div class="card mb-4">
+    <div class="card-header">Filter</div>
+    <div class="card-body">
+        <form asp-action="Index" method="get" class="row g-3">
+            <div class="col-md-2">
+                <label class="form-label">Niveau</label>
+                <select name="Level" class="form-select">
+                    <option value="">Alle</option>
+                    <option value="Verbose" selected="@(Model.Level == "Verbose")">Verbose</option>
+                    <option value="Debug" selected="@(Model.Level == "Debug")">Debug</option>
+                    <option value="Information" selected="@(Model.Level == "Information")">Information</option>
+                    <option value="Warning" selected="@(Model.Level == "Warning")">Warning</option>
+                    <option value="Error" selected="@(Model.Level == "Error")">Error</option>
+                    <option value="Fatal" selected="@(Model.Level == "Fatal")">Fatal</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Søg i besked</label>
+                <input name="Q" class="form-control" value="@Model.Q" placeholder="Fritekst..." />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Fra</label>
+                <input name="From" type="datetime-local" class="form-control"
+                       value="@(Model.From?.ToString("yyyy-MM-ddTHH:mm") ?? "")" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Til</label>
+                <input name="To" type="datetime-local" class="form-control"
+                       value="@(Model.To?.ToString("yyyy-MM-ddTHH:mm") ?? "")" />
+            </div>
+            <div class="col-md-1">
+                <label class="form-label">Størrelse</label>
+                <input name="PageSize" type="number" min="10" max="200" class="form-control" value="@Model.PageSize" />
+            </div>
+            <div class="col-md-1 d-flex align-items-end gap-2">
+                <button type="submit" class="btn btn-primary w-100">Søg</button>
+            </div>
+            <div class="col-md-1 d-flex align-items-end">
+                <a asp-action="Index" class="btn btn-secondary w-100">Nulstil</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+@if (result is not null)
+{
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <span style="color:var(--text-muted);font-size:13px;">@result.Total resultater</span>
+        <span style="color:var(--text-muted);font-size:13px;">Side @result.Page af @totalPages</span>
+    </div>
+
+    <div class="card">
+        <div class="card-body p-0">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th style="width:160px;">Tidspunkt</th>
+                        <th style="width:90px;">Niveau</th>
+                        <th>Besked</th>
+                        <th>Kilde</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var log in result.Items)
+                    {
+                        var levelClass = log.Level switch
+                        {
+                            "Error" or "Fatal" => "badge-soft-danger",
+                            "Warning" => "badge-soft-warning",
+                            "Information" => "badge-soft-info",
+                            _ => "badge-soft-warning"
+                        };
+                        <tr>
+                            <td style="color:var(--text-muted);font-size:12px;white-space:nowrap;">@log.Timestamp.ToString("dd/MM/yyyy HH:mm:ss")</td>
+                            <td><span class="badge-soft @levelClass">@log.Level</span></td>
+                            <td style="max-width:500px;">
+                                <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="@log.Message">@log.Message</div>
+                                @if (!string.IsNullOrEmpty(log.Exception))
+                                {
+                                    <details style="margin-top:4px;">
+                                        <summary style="color:var(--danger);font-size:12px;cursor:pointer;">Undtagelse</summary>
+                                        <pre style="font-size:11px;color:var(--text-muted);white-space:pre-wrap;margin-top:4px;">@log.Exception</pre>
+                                    </details>
+                                }
+                            </td>
+                            <td style="color:var(--text-muted);font-size:12px;">@log.SourceContext</td>
+                        </tr>
+                    }
+                    @if (!result.Items.Any())
+                    {
+                        <tr><td colspan="4" class="text-center" style="color:var(--text-muted);padding:32px;">Ingen logposter fundet.</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    @if (totalPages > 1)
+    {
+        <div class="d-flex gap-2 justify-content-center mt-4">
+            @if (Model.Page > 1)
+            {
+                <a asp-action="Index" asp-all-route-data='@(new Dictionary<string, string?> {
+                    ["Page"] = (Model.Page - 1).ToString(),
+                    ["PageSize"] = Model.PageSize.ToString(),
+                    ["Level"] = Model.Level,
+                    ["Q"] = Model.Q,
+                    ["From"] = Model.From?.ToString("yyyy-MM-ddTHH:mm"),
+                    ["To"] = Model.To?.ToString("yyyy-MM-ddTHH:mm")
+                })' class="btn btn-secondary btn-sm">← Forrige</a>
+            }
+            <span style="color:var(--text-muted);align-self:center;font-size:13px;">Side @Model.Page af @totalPages</span>
+            @if (Model.Page < totalPages)
+            {
+                <a asp-action="Index" asp-all-route-data='@(new Dictionary<string, string?> {
+                    ["Page"] = (Model.Page + 1).ToString(),
+                    ["PageSize"] = Model.PageSize.ToString(),
+                    ["Level"] = Model.Level,
+                    ["Q"] = Model.Q,
+                    ["From"] = Model.From?.ToString("yyyy-MM-ddTHH:mm"),
+                    ["To"] = Model.To?.ToString("yyyy-MM-ddTHH:mm")
+                })' class="btn btn-secondary btn-sm">Næste →</a>
+            }
+        </div>
+    }
+}

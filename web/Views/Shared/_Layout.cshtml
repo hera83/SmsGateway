@@ -1,0 +1,94 @@
+﻿<!DOCTYPE html>
+<html lang="da">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>@ViewData["Title"] - SMS Gateway</title>
+    <script type="importmap"></script>
+    <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+</head>
+<body>
+<div class="app-shell">
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <a class="sidebar-brand" asp-controller="Home" asp-action="Index">
+            <div class="sidebar-brand-icon">📡</div>
+            <span class="sidebar-brand-name">SMS Gateway</span>
+        </a>
+
+        <div class="sidebar-section">
+            <div class="sidebar-label">Navigation</div>
+            <a class="nav-link-sidebar @(ViewContext.RouteData.Values["controller"]?.ToString() == "Dashboard" ? "active" : "")"
+               asp-controller="Dashboard" asp-action="Index">
+                <span class="nav-icon">▣</span> Dashboard
+            </a>
+
+            <div class="sidebar-label">Administrer</div>
+            <a class="nav-link-sidebar @(ViewContext.RouteData.Values["controller"]?.ToString() == "Keys" ? "active" : "")"
+               asp-controller="Keys" asp-action="Index">
+                <span class="nav-icon">🔑</span> API-nøgler
+            </a>
+            <a class="nav-link-sidebar @(ViewContext.RouteData.Values["controller"]?.ToString() == "Subscriptions" ? "active" : "")"
+               asp-controller="Subscriptions" asp-action="Index">
+                <span class="nav-icon">📋</span> Abonnementer
+            </a>
+            <a class="nav-link-sidebar @(ViewContext.RouteData.Values["controller"]?.ToString() == "Cost" && ViewContext.RouteData.Values["action"]?.ToString() == "Index" ? "active" : "")"
+               asp-controller="Cost" asp-action="Index">
+                <span class="nav-icon">💰</span> Prisstyring
+            </a>
+            <a class="nav-link-sidebar @(ViewContext.RouteData.Values["controller"]?.ToString() == "Cost" && ViewContext.RouteData.Values["action"]?.ToString() == "UsageReport" ? "active" : "")"
+               asp-controller="Cost" asp-action="UsageReport">
+                <span class="nav-icon">📊</span> Forbrugsrapport
+            </a>
+
+            <div class="sidebar-label">Kommunikation</div>
+            <a class="nav-link-sidebar @(ViewContext.RouteData.Values["controller"]?.ToString() == "Sms" ? "active" : "")"
+               asp-controller="Sms" asp-action="Index">
+                <span class="nav-icon">💬</span> SMS
+            </a>
+
+            <div class="sidebar-label">System</div>
+            <a class="nav-link-sidebar @(ViewContext.RouteData.Values["controller"]?.ToString() == "Logs" ? "active" : "")"
+               asp-controller="Logs" asp-action="Index">
+                <span class="nav-icon">📋</span> Logs
+            </a>
+        </div>
+
+        @if (User.Identity?.IsAuthenticated == true)
+        {
+            <div class="sidebar-footer">
+                <div class="sidebar-user">
+                    <div class="sidebar-user-avatar">
+                        @(User.Identity.Name?.Length > 0 ? User.Identity.Name[0].ToString().ToUpper() : "?")
+                    </div>
+                    <span class="sidebar-user-name" title="@User.Identity.Name">@User.Identity.Name</span>
+                    <form asp-controller="Account" asp-action="Logout" method="post">
+                        @Html.AntiForgeryToken()
+                        <button type="submit" class="sidebar-logout-btn" title="Log ud">⎋</button>
+                    </form>
+                </div>
+            </div>
+        }
+    </aside>
+
+    <!-- Main area -->
+    <div class="main-area">
+        <div class="topbar">
+            <h1 class="topbar-title">@(ViewData["Title"] ?? "SMS Gateway")</h1>
+        </div>
+        <main class="main-content">
+            @RenderBody()
+        </main>
+    </div>
+
+</div>
+
+<script src="~/lib/jquery/dist/jquery.min.js"></script>
+<script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
+<script src="~/js/site.js" asp-append-version="true"></script>
+@await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>
+

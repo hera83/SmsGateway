@@ -1,0 +1,45 @@
+@model LoginViewModel
+
+@{
+    ViewData["Title"] = "Log ind";
+    Layout = "_AuthLayout";
+}
+
+<div class="auth-card">
+    <div class="auth-logo">
+        <div class="auth-logo-icon">📡</div>
+        <span class="auth-logo-name">SMS Gateway</span>
+    </div>
+
+    <h2 class="auth-title">Log ind</h2>
+    <p class="auth-subtitle">Indtast dine loginoplysninger for at fortsætte.</p>
+
+    <form asp-action="Login" method="post">
+        <input type="hidden" name="returnUrl" value="@ViewData["ReturnUrl"]" />
+        <div asp-validation-summary="ModelOnly" class="alert alert-danger mb-3" role="alert"></div>
+
+        <div class="mb-3">
+            <label asp-for="Email" class="form-label"></label>
+            <input asp-for="Email" class="form-control" autocomplete="username" placeholder="din@email.dk" />
+            <span asp-validation-for="Email" class="text-danger small"></span>
+        </div>
+
+        <div class="mb-3">
+            <label asp-for="Password" class="form-label"></label>
+            <input asp-for="Password" class="form-control" autocomplete="current-password" placeholder="••••••••" />
+            <span asp-validation-for="Password" class="text-danger small"></span>
+        </div>
+
+        <div class="mb-4 form-check">
+            <input asp-for="RememberMe" class="form-check-input" />
+            <label asp-for="RememberMe" class="form-check-label"></label>
+        </div>
+
+        <button type="submit" class="btn btn-primary w-100">Log ind</button>
+    </form>
+</div>
+
+@section Scripts {
+    @{ await Html.RenderPartialAsync("_ValidationScriptsPartial"); }
+}
+

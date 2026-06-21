@@ -1,0 +1,98 @@
+@model web.Models.Cost.CostIndexViewModel
+
+@{
+    ViewData["Title"] = "Prisstyring";
+    var success = TempData["Success"] as string;
+    var error = TempData["Error"] as string;
+}
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <div class="alert alert-danger mb-4">@error</div>
+}
+@if (!string.IsNullOrEmpty(success))
+{
+    <div class="alert mb-4" style="background:rgba(16,163,127,0.15);border:1px solid rgba(16,163,127,0.3);color:#34d399;border-radius:var(--radius);font-size:13px;">@success</div>
+}
+
+<div class="row g-4 mb-4">
+    <div class="col-md-4">
+        <div class="stat-card">
+            <div class="stat-card-label">Nuværende SMS-pris</div>
+            <div class="stat-card-value">@(Model.CurrentCost?.SmsPriceDkk.ToString("N4") ?? "–") kr.</div>
+            <div class="stat-card-sub">Sidst opdateret: @(Model.CurrentCost?.UpdatedAt.ToString("dd/MM/yyyy HH:mm") ?? "–")</div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="stat-card">
+            <div class="stat-card-label">Prishistorik</div>
+            <div class="stat-card-value">@Model.History.Count</div>
+            <div class="stat-card-sub">Prisændringer i alt</div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="stat-card d-flex align-items-center justify-content-center">
+            <div class="text-center">
+                <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#updatePriceModal">Opdater pris</button>
+                <div class="mt-2">
+                    <a asp-controller="Cost" asp-action="UsageReport" class="btn btn-secondary btn-sm">Forbrugsrapport</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">Prishistorik</div>
+    <div class="card-body p-0">
+        <table class="table table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Dato</th>
+                    <th>Gammel pris</th>
+                    <th>Ny pris</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var h in Model.History.OrderByDescending(x => x.ChangedAt))
+                {
+                    <tr>
+                        <td style="color:var(--text-muted);">@h.ChangedAt.ToString("dd/MM/yyyy HH:mm")</td>
+                        <td>@h.OldSmsPriceDkk.ToString("N4") kr.</td>
+                        <td>@h.NewSmsPriceDkk.ToString("N4") kr.</td>
+                    </tr>
+                }
+                @if (!Model.History.Any())
+                {
+                    <tr><td colspan="3" class="text-center" style="color:var(--text-muted);padding:32px;">Ingen prishistorik.</td></tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Update Price Modal -->
+<div class="modal fade" id="updatePriceModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content" style="background:var(--bg-surface);border:1px solid var(--border);">
+            <form asp-action="Update" method="post">
+                @Html.AntiForgeryToken()
+                <div class="modal-header" style="border-color:var(--border);">
+                    <h5 class="modal-title" style="color:var(--text-primary);">Opdater SMS-pris</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Ny pris pr. SMS (DKK)</label>
+                        <input name="SmsPriceDkk" type="number" step="0.0001" min="0.0001" class="form-control"
+                               value="@(Model.CurrentCost?.SmsPriceDkk.ToString("F4", System.Globalization.CultureInfo.InvariantCulture) ?? "0.0000")" required />
+                    </div>
+                </div>
+                <div class="modal-footer" style="border-color:var(--border);">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuller</button>
+                    <button type="submit" class="btn btn-primary">Gem</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>

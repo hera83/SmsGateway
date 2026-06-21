@@ -1,0 +1,29 @@
+# Build artifacts (api/, web/, and any future project)
+**/bin/
+**/obj/
+
+# IDE / editor
+.vs/
+.vscode/
+.github/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+CLAUDE.md
+
+# OS system files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+.AppleDouble
+.LSOverride
+.env
+
+# SQLite databases (api/App_dbs, web/App_dbs)
+**/App_dbs/**
+
+# Logs
+*.log

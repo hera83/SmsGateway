@@ -1,0 +1,168 @@
+@model web.Models.Sms.SmsIndexViewModel
+
+@{
+    ViewData["Title"] = "SMS";
+    var success = TempData["Success"] as string;
+    var error = TempData["Error"] as string;
+}
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <div class="alert alert-danger mb-4">@error</div>
+}
+@if (!string.IsNullOrEmpty(success))
+{
+    <div class="alert mb-4" style="background:rgba(16,163,127,0.15);border:1px solid rgba(16,163,127,0.3);color:#34d399;border-radius:var(--radius);font-size:13px;">@success</div>
+}
+
+@if (Model.DeviceInfo is not null)
+{
+    <div class="card mb-4">
+        <div class="card-header">Enhedsinformation</div>
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <div style="color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Enhed</div>
+                    <div>@Model.DeviceInfo.Manufacturer @Model.DeviceInfo.Model</div>
+                    <div style="color:var(--text-muted);font-size:12px;">@Model.DeviceInfo.Revision</div>
+                </div>
+                <div class="col-md-2">
+                    <div style="color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Telefonnummer</div>
+                    <div>@(Model.DeviceInfo.PhoneNumber ?? "–")</div>
+                </div>
+                <div class="col-md-2">
+                    <div style="color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Signalkvalitet</div>
+                    <div>@(Model.DeviceInfo.SignalQuality?.ToString() ?? "–") dBm</div>
+                </div>
+                <div class="col-md-2">
+                    <div style="color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Operatør</div>
+                    <div>@(Model.DeviceInfo.OperatorName ?? "–")</div>
+                </div>
+                <div class="col-md-3">
+                    <div style="color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Netværk</div>
+                    <div>@(Model.DeviceInfo.NetworkRegistration ?? "–")</div>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <form asp-action="Index" method="get" class="d-flex gap-2">
+        <input name="filterPhoneNumber" class="form-control form-control-sm" style="width:160px;"
+               placeholder="Filtrér telefonnr." value="@Model.FilterPhoneNumber" />
+        <button type="submit" class="btn btn-secondary btn-sm">Søg</button>
+        @if (!string.IsNullOrEmpty(Model.FilterPhoneNumber))
+        {
+            <a asp-action="Index" class="btn btn-secondary btn-sm">Nulstil</a>
+        }
+    </form>
+    <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#sendSmsModal">+ Send SMS</button>
+</div>
+
+<div class="card">
+    <div class="card-header">Indgående SMS (@Model.Messages.Count)</div>
+    <div class="card-body p-0">
+        <table class="table table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Fra</th>
+                    <th>Besked</th>
+                    <th>Status</th>
+                    <th>Modtaget</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var sms in Model.Messages)
+                {
+                    <tr>
+                        <td>@(sms.FromPhoneNumber ?? "–")</td>
+                        <td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="@sms.Body">@sms.Body</td>
+                        <td>
+                            @{
+                                var sc = sms.Status switch { "Read" => "badge-soft-success", "Unread" => "badge-soft-info", _ => "badge-soft-warning" };
+                            }
+                            <span class="badge-soft @sc">@sms.Status</span>
+                        </td>
+                        <td style="color:var(--text-muted);font-size:12px;white-space:nowrap;">
+                            @(sms.ReceivedAt?.ToString("dd/MM/yyyy HH:mm") ?? "–")
+                        </td>
+                        <td class="text-end">
+                            <button class="btn btn-danger btn-sm"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#deleteSmsModal"
+                                    data-id="@sms.Id">
+                                Slet
+                            </button>
+                        </td>
+                    </tr>
+                }
+                @if (!Model.Messages.Any())
+                {
+                    <tr><td colspan="5" class="text-center" style="color:var(--text-muted);padding:32px;">Ingen SMS-beskeder.</td></tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Send SMS Modal -->
+<div class="modal fade" id="sendSmsModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content" style="background:var(--bg-surface);border:1px solid var(--border);">
+            <form asp-action="Send" method="post">
+                @Html.AntiForgeryToken()
+                <div class="modal-header" style="border-color:var(--border);">
+                    <h5 class="modal-title" style="color:var(--text-primary);">Send SMS</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Modtager (8 cifre)</label>
+                        <input name="ToPhoneNumber" class="form-control" placeholder="12345678" pattern="\d{8}" required />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Besked</label>
+                        <textarea name="Message" class="form-control" rows="4" maxlength="1600" required placeholder="Skriv din besked..."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer" style="border-color:var(--border);">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuller</button>
+                    <button type="submit" class="btn btn-primary">Send</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Delete SMS Modal -->
+<div class="modal fade" id="deleteSmsModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content" style="background:var(--bg-surface);border:1px solid var(--border);">
+            <form asp-action="Delete" method="post">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="id" id="deleteSmsId" />
+                <div class="modal-header" style="border-color:var(--border);">
+                    <h5 class="modal-title" style="color:var(--text-primary);">Slet SMS</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p style="color:var(--text-secondary);">Er du sikker på at du vil slette denne SMS? Handlingen kan ikke fortrydes.</p>
+                </div>
+                <div class="modal-footer" style="border-color:var(--border);">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuller</button>
+                    <button type="submit" class="btn btn-danger">Slet</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+<script>
+    document.getElementById('deleteSmsModal').addEventListener('show.bs.modal', function (e) {
+        document.getElementById('deleteSmsId').value = e.relatedTarget.dataset.id;
+    });
+</script>
+}
