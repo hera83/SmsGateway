@@ -94,6 +94,35 @@ udevadm info -a -n /dev/ttyUSB2 | grep -E 'SUBSYSTEM|GROUP'
 
 Put that path in `.env` as `SERIAL_DEVICE` (the examples below assume `/dev/ttyUSB2`).
 
+**Before running the container, stop and *mask* `ModemManager`.** Ubuntu's
+`ModemManager` service auto-detects USB/serial modems and opens the device itself to
+probe and manage it (you'll see it in `systemctl status ModemManager` with a `modemN`
+it has registered) — `api` then can't open the same port and fails with `Device or
+resource busy` (.NET reports this as `Access to the port '...' is denied.`). Since
+this host is a dedicated SMS gateway and doesn't need ModemManager's mobile-broadband
+management, disable it permanently:
+
+```bash
+sudo systemctl stop ModemManager
+sudo systemctl disable ModemManager
+sudo systemctl mask ModemManager
+```
+
+`disable` alone is **not enough to survive a reboot reliably**: ModemManager's
+D-Bus service file lets it be auto-started on demand (e.g. by NetworkManager probing
+for modems) even when "disabled", since that only removes it from normal boot
+targets. `mask` replaces the unit with a symlink to `/dev/null`, so systemd refuses to
+start it under any circumstance — boot, manual `start`, or D-Bus activation. Do this
+once per host; it persists across reboots, including after a fresh Ubuntu 24.04
+install (where ModemManager is enabled by default).
+
+The rest of the stack already comes back automatically after a reboot without any
+extra steps: Docker's systemd service is enabled by default once installed (confirm
+with `systemctl is-enabled docker`), and both services in `docker-compose.yml` have
+`restart: unless-stopped`, so Docker restarts `smsapp` and `web` itself once the
+daemon is back up — as long as you didn't manually `docker compose stop` them before
+the reboot.
+
 ## 4. Running with Docker Compose (recommended)
 
 ```bash
