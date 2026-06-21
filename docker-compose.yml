@@ -21,8 +21,13 @@ services:
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
       Security__MasterKey: ${MASTER_KEY}
     volumes:
-      # Persist the SQLite database across container restarts/upgrades.
-      - ./api/App_dbs:/app/App_dbs
+      # Named volume (not a host bind-mount): Docker seeds it from /app/App_dbs's
+      # existing ownership in the image (smsgateway:smsgateway), so the non-root
+      # container user can write to it immediately. A host bind-mount here would
+      # need to be pre-created and chowned to the container's UID/GID first — see
+      # README.md, section "Persisted data" for that alternative and how to back
+      # up / inspect this volume.
+      - api_data:/app/App_dbs
     # Uncomment if the host's serial device group GID does not match the
     # "dialout" group baked into the image (see README.md, section "Non-root
     # permissions"). Replace 20 with `getent group dialout` (or the device's
@@ -48,4 +53,8 @@ services:
       SmsService__Url: http://smsapp:8080
       SmsService__MasterKey: ${MASTER_KEY}
     volumes:
-      - ./web/App_dbs:/app/App_dbs
+      - web_data:/app/App_dbs
+
+volumes:
+  api_data:
+  web_data:

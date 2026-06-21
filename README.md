@@ -121,7 +121,7 @@ docker run -d \
   -e SERIAL_PORT=/dev/COM1 \
   -e Security__MasterKey=<your-master-key> \
   -p 5000:8080 \
-  -v "$(pwd)/api/App_dbs:/app/App_dbs" \
+  -v api_data:/app/App_dbs \
   sms-gateway-api
 ```
 
@@ -135,15 +135,68 @@ docker run -d \
   -e SmsService__Url=http://<api-host>:5000 \
   -e SmsService__MasterKey=<your-master-key> \
   -p 8080:8080 \
-  -v "$(pwd)/web/App_dbs:/app/App_dbs" \
+  -v web_data:/app/App_dbs \
   sms-gateway-web
 ```
+
+(`-v api_data:/app/App_dbs` is a named volume, created automatically on first run — see
+section 6 for why this matters more than it sounds like it should.)
 
 (With plain `docker run`, the two containers aren't on the same Compose network, so
 `web` must reach `api` via a routable host/IP, not the `smsapp` DNS name Compose
 provides — this is one reason Compose is the recommended path.)
 
-## 6. Non-root execution and serial port permissions
+## 6. Persisted data (SQLite databases)
+
+The SQLite databases (`api/App_dbs/smsgateway.db`, `web/App_dbs/webgateway.db`) live
+in **named Docker volumes** (`api_data`, `web_data`), not host bind-mounts. This is
+deliberate, not just a style choice:
+
+Both containers run as a non-root user (see section 7). If `App_dbs` were a host
+bind-mount (`./api/App_dbs:/app/App_dbs`) instead, Docker creates that host directory
+owned by `root` the first time it doesn't already exist — and the non-root container
+user then can't write to it, so EF Core's `Database.Migrate()`/SQLite fails with
+`SQLite Error 14: 'unable to open database file'` and the app exits immediately
+(this is exactly what restart-looping with no useful `docker ps` info usually means;
+check `docker compose logs` for the real exception, not just the exit code). This
+bites on every host, but the Windows+WSL2 file-sharing layer makes it especially
+unpredictable. A named volume avoids the problem entirely: Docker seeds a new, empty
+named volume from the mount point's existing content/ownership *in the image*
+(`/app/App_dbs`, `chown`'d to the app user in the Dockerfile), so permissions are
+correct from the first run with zero manual steps.
+
+Useful commands:
+
+```bash
+# List/inspect the volumes
+docker volume ls
+docker volume inspect sms-gateway_api_data
+
+# Back up a volume to a tarball on the host
+docker run --rm -v sms-gateway_api_data:/data -v "$(pwd)":/backup alpine \
+  tar czf /backup/api_data_backup.tar.gz -C /data .
+
+# Inspect the database file without leaving Docker
+docker compose exec smsapp ls -la /app/App_dbs
+```
+
+(The `sms-gateway_` prefix on the volume name comes from the Compose project name —
+run `docker volume ls` to confirm the exact name on your machine.)
+
+If you'd rather have the `.db` file directly browsable on the host (e.g. to open it
+with a SQLite GUI tool), you can switch back to a bind mount, but you must pre-create
+and `chown` the directory to match the container's UID/GID **before** the first
+`docker compose up`:
+
+```bash
+mkdir -p api/App_dbs web/App_dbs
+sudo chown -R 10001:10001 api/App_dbs web/App_dbs
+```
+
+then change `api_data:/app/App_dbs` / `web_data:/app/App_dbs` back to
+`./api/App_dbs:/app/App_dbs` / `./web/App_dbs:/app/App_dbs` in `docker-compose.yml`.
+
+## 7. Non-root execution and serial port permissions
 
 Both containers run as non-root users (UID/GID `10001` — deliberately not `1000`,
 since current Ubuntu/Debian base images already ship a built-in non-root user/group
@@ -182,7 +235,7 @@ group entirely. Diagnose and fix with one of the following:
    user read/write it) or run the container with `--user root` / `privileged: true`.
    Prefer option 2.
 
-## 7. Verifying it's running
+## 8. Verifying it's running
 
 ```bash
 curl http://localhost:5000/api/Health/Get   # api
@@ -192,7 +245,7 @@ curl -I http://localhost:8080/               # web dashboard
 Swagger UI for the api is at `http://localhost:5000/swagger` (not disabled in
 Production).
 
-## 8. Upgrading / reconfiguring
+## 9. Upgrading / reconfiguring
 
 ```bash
 # Config-only change (ports, serial device, secret) — edit .env, then:
@@ -202,7 +255,7 @@ docker compose up -d
 docker compose up -d --build
 ```
 
-The SQLite databases under `./api/App_dbs` and `./web/App_dbs`, and EF Core
+The SQLite databases in the `api_data`/`web_data` volumes (section 6), and EF Core
 migrations for both projects, are applied automatically on startup
 (`dbContext.Database.Migrate()` in each `Program.cs`), so no manual migration step is
 needed when upgrading.
