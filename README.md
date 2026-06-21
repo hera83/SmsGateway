@@ -145,8 +145,10 @@ provides — this is one reason Compose is the recommended path.)
 
 ## 6. Non-root execution and serial port permissions
 
-Both containers run as non-root users (UID/GID `1000`), not `root`, per the principle
-of least privilege. `api`'s image additionally adds its user to the `dialout` group,
+Both containers run as non-root users (UID/GID `10001` — deliberately not `1000`,
+since current Ubuntu/Debian base images already ship a built-in non-root user/group
+at GID `1000`), not `root`, per the principle of least privilege. `api`'s image
+additionally adds its user to the `dialout` group,
 which is the group that normally owns TTY/USB-serial devices (`/dev/ttyUSB*`,
 `/dev/ttyACM*`) on Debian/Ubuntu — including inside the `--device`/`devices` mapping,
 since Docker preserves the device's original ownership/group inside the container.

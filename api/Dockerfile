@@ -23,14 +23,16 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends libudev1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Non-root runtime user. UID/GID 1000 chosen so the host can align bind-mount
-# ownership (e.g. `chown -R 1000:1000 ./App_dbs`) without guessing an ID.
+# Non-root runtime user. UID/GID 10001 chosen so the host can align bind-mount
+# ownership (e.g. `chown -R 10001:10001 ./App_dbs`) without guessing an ID — and
+# deliberately not 1000, since the base image already ships a built-in non-root
+# user/group at GID 1000 (Ubuntu/Debian base images now default to this).
 # Membership in "dialout" matches the group that owns serial devices
 # (/dev/ttyUSB*, /dev/ttyACM*, ...) on Debian/Ubuntu — see README.md for details
 # on what to do if the device's group/permissions differ on the host.
 RUN getent group dialout >/dev/null || groupadd --system dialout \
-    && groupadd --gid 1000 smsgateway \
-    && useradd --uid 1000 --gid smsgateway --groups dialout --create-home --shell /usr/sbin/nologin smsgateway \
+    && groupadd --gid 10001 smsgateway \
+    && useradd --uid 10001 --gid smsgateway --groups dialout --create-home --shell /usr/sbin/nologin smsgateway \
     && mkdir -p /app/App_dbs \
     && chown -R smsgateway:smsgateway /app
 
