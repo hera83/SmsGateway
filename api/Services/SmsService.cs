@@ -179,7 +179,10 @@ public sealed class SmsService(IOptions<SmsServiceOptions> options, ILogger<SmsS
             var quote = '"';
             await WriteLineAsync(serialPort, $"AT+CMGS={quote}{to.Trim()}{quote}", cancellationToken);
             await Task.Delay(TimeSpan.FromMilliseconds(_options.PromptDelayMs), cancellationToken);
-            serialPort.Write(message + char.ConvertFromUtf32(26));
+
+            var gsmBytes = GsmAlphabet.Encode(message);
+            serialPort.Write(gsmBytes, 0, gsmBytes.Length);
+            serialPort.Write([26], 0, 1);
 
             var lines = await ReadUntilTerminalAsync(serialPort, cancellationToken);
             EnsureNoError(lines);
@@ -342,6 +345,7 @@ public sealed class SmsService(IOptions<SmsServiceOptions> options, ILogger<SmsS
     {
         await ExecuteAtCommandWithOpenPortAsync(serialPort, "ATE0", cancellationToken);
         await ExecuteAtCommandWithOpenPortAsync(serialPort, "AT+CMEE=2", cancellationToken);
+        await ExecuteAtCommandWithOpenPortAsync(serialPort, "AT+CSCS=\"GSM\"", cancellationToken);
         await ExecuteAtCommandWithOpenPortAsync(serialPort, "AT+CMGF=1", cancellationToken);
         await ExecuteAtCommandWithOpenPortAsync(serialPort, "AT+CPMS=\"SM\",\"SM\",\"SM\"", cancellationToken);
     }
@@ -439,7 +443,7 @@ public sealed class SmsService(IOptions<SmsServiceOptions> options, ILogger<SmsS
                 bodyIndex++;
             }
 
-            var body = string.Join("\n", bodyLines);
+            var body = GsmAlphabet.Decode(string.Join("\n", bodyLines));
             if (match.Success)
             {
                 messages.Add(new SmsMessage
@@ -489,7 +493,7 @@ public sealed class SmsService(IOptions<SmsServiceOptions> options, ILogger<SmsS
             bodyIndex++;
         }
 
-        var body = string.Join("\n", bodyLines);
+        var body = GsmAlphabet.Decode(string.Join("\n", bodyLines));
         var match = CmgrLineRegex.Match(header);
 
         if (!match.Success)
@@ -601,4 +605,62 @@ public sealed class SmsServiceOptions
     public int ReadTimeoutMs { get; set; } = 5000;
     public int WriteTimeoutMs { get; set; } = 5000;
     public int PromptDelayMs { get; set; } = 400;
+}
+
+/// <summary>
+/// Converts between .NET strings and the GSM 03.38 (3GPP TS 23.038) default alphabet
+/// used by the modem's AT+CMGF=1 text mode when AT+CSCS="GSM" is selected. Most letters,
+/// digits and punctuation share the same code points as ASCII, but Danish characters
+/// (æ, ø, å and their uppercase forms) sit at control-code positions (0x0B-0x1D) that
+/// .NET's Encoding.ASCII silently replaces with '?' if sent as plain text.
+/// </summary>
+internal static class GsmAlphabet
+{
+    private static readonly char[] BasicTable =
+    [
+        '@', '£', '$', '¥', 'è', 'é', 'ù', 'ì', 'ò', 'Ç', '\n', 'Ø', 'ø', '\r', 'Å', 'å',
+        'Δ', '_', 'Φ', 'Γ', 'Λ', 'Ω', 'Π', 'Ψ', 'Σ', 'Θ', 'Ξ', '', 'Æ', 'æ', 'ß', 'É',
+        ' ', '!', '"', '#', '¤', '%', '&', '\'', '(', ')', '*', '+', ',', '-', '.', '/',
+        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', ':', ';', '<', '=', '>', '?',
+        '¡', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O',
+        'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'Ä', 'Ö', 'Ñ', 'Ü', '§',
+        '¿', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o',
+        'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'ä', 'ö', 'ñ', 'ü', 'à'
+    ];
+
+    private static readonly Dictionary<char, byte> CharToByte = BuildReverseLookup();
+
+    private static Dictionary<char, byte> BuildReverseLookup()
+    {
+        var map = new Dictionary<char, byte>(BasicTable.Length);
+        for (var i = 0; i < BasicTable.Length; i++)
+        {
+            map[BasicTable[i]] = (byte)i;
+        }
+
+        return map;
+    }
+
+    public static byte[] Encode(string text)
+    {
+        var bytes = new byte[text.Length];
+        for (var i = 0; i < text.Length; i++)
+        {
+            bytes[i] = CharToByte.TryGetValue(text[i], out var value) ? value : (byte)'?';
+        }
+
+        return bytes;
+    }
+
+    public static string Decode(string raw)
+    {
+        var chars = new char[raw.Length];
+        for (var i = 0; i < raw.Length; i++)
+        {
+            var code = raw[i];
+            chars[i] = code < BasicTable.Length ? BasicTable[code] : code;
+        }
+
+        return new string(chars);
+    }
 }
