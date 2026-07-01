@@ -4,6 +4,8 @@ using System.Text;
 using System.Text.RegularExpressions;
 using api.Services.Interfaces;
 using api.Services.Models;
+using HeboTech.ATLib.Messaging;
+using HeboTech.ATLib.Numbering;
 using Microsoft.Extensions.Options;
 
 namespace api.Services;
@@ -11,12 +13,17 @@ namespace api.Services;
 public sealed class SmsService(IOptions<SmsServiceOptions> options, ILogger<SmsService> logger) : ISmsService
 {
     private static readonly Regex CmgLineRegex = new("\\+CMGS:\\s*(\\d+)", RegexOptions.Compiled | RegexOptions.CultureInvariant);
-    private static readonly Regex CmgrLineRegex = new("\\+CMGR:\\s*\"(?<status>[^\"]+)\",\"(?<from>[^\"]*)\",.*?,\"(?<date>[^\"]*)\"", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex CmgrPduHeaderRegex = new("\\+CMGR:\\s*(?<stat>\\d+),[^,]*,(?<len>\\d+)", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly Regex CmgdCountRegex = new("\\+CMGD:\\s*(\\d+)", RegexOptions.Compiled | RegexOptions.CultureInvariant);
-    private static readonly Regex CmglHeaderRegex = new("\\+CMGL:\\s*(?<index>\\d+),\"(?<status>[^\"]+)\",\"(?<from>[^\"]*)\",.*?,\"(?<date>[^\"]*)\"", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex CmglPduHeaderRegex = new("\\+CMGL:\\s*(?<index>\\d+),(?<stat>\\d+),[^,]*,(?<len>\\d+)", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private readonly SmsServiceOptions _options = options.Value;
     private readonly SemaphoreSlim _portLock = new(1, 1);
+
+    // Populated by the most recent ListMessagesAsync call so DeleteMessageAsync can remove every
+    // SIM slot belonging to a reassembled multi-part (concatenated) message, not just the first part.
+    private Dictionary<int, int[]> _lastIndexGroups = new();
+    private byte _concatReference;
 
     public async Task<bool> IsReadyAsync(CancellationToken cancellationToken = default)
     {
@@ -174,27 +181,39 @@ public sealed class SmsService(IOptions<SmsServiceOptions> options, ILogger<SmsS
             using var serialPort = CreatePort();
             serialPort.Open();
 
-            await EnsureTextModeAsync(serialPort, cancellationToken);
+            await EnsurePduModeAsync(serialPort, cancellationToken);
 
-            var quote = '"';
-            await WriteLineAsync(serialPort, $"AT+CMGS={quote}{to.Trim()}{quote}", cancellationToken);
-            await Task.Delay(TimeSpan.FromMilliseconds(_options.PromptDelayMs), cancellationToken);
-
-            var gsmBytes = GsmAlphabet.Encode(message);
-            serialPort.Write(gsmBytes, 0, gsmBytes.Length);
-            serialPort.Write([26], 0, 1);
-
-            var lines = await ReadUntilTerminalAsync(serialPort, cancellationToken);
-            EnsureNoError(lines);
+            var phoneNumber = PhoneNumberFactory.CreateCommonIsdn(to.Trim());
+            var submitRequest = new SmsSubmitRequest(phoneNumber, message, CharacterSet.UCS2)
+            {
+                MessageReferenceNumber = _concatReference++
+            };
+            var pdus = SmsSubmitEncoder.Encode(submitRequest, includeEmptySmscLength: false).ToList();
 
             int? modemReference = null;
-            var cmgsLine = lines.FirstOrDefault(x => x.StartsWith("+CMGS:", StringComparison.OrdinalIgnoreCase));
-            if (cmgsLine is not null)
+            var allLines = new List<string>();
+
+            foreach (var hex in pdus)
             {
-                var match = CmgLineRegex.Match(cmgsLine);
-                if (match.Success && int.TryParse(match.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id))
+                await WriteLineAsync(serialPort, $"AT+CMGS={hex.Length / 2}", cancellationToken);
+                await WaitForPromptAsync(serialPort, cancellationToken);
+
+                var pduBytes = Encoding.ASCII.GetBytes(hex);
+                serialPort.Write(pduBytes, 0, pduBytes.Length);
+                serialPort.Write([26], 0, 1);
+
+                var lines = await ReadUntilTerminalAsync(serialPort, cancellationToken);
+                EnsureNoError(lines);
+                allLines.AddRange(lines);
+
+                var cmgsLine = lines.FirstOrDefault(x => x.StartsWith("+CMGS:", StringComparison.OrdinalIgnoreCase));
+                if (cmgsLine is not null)
                 {
-                    modemReference = id;
+                    var match = CmgLineRegex.Match(cmgsLine);
+                    if (match.Success && int.TryParse(match.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id))
+                    {
+                        modemReference ??= id;
+                    }
                 }
             }
 
@@ -204,7 +223,7 @@ public sealed class SmsService(IOptions<SmsServiceOptions> options, ILogger<SmsS
                 Status = "Sent",
                 QueuedAt = DateTime.Now,
                 ModemReference = modemReference,
-                ModemResponse = lines
+                ModemResponse = allLines
             };
         }
         finally
@@ -220,19 +239,20 @@ public sealed class SmsService(IOptions<SmsServiceOptions> options, ILogger<SmsS
         {
             using var serialPort = CreatePort();
             serialPort.Open();
-            await EnsureTextModeAsync(serialPort, cancellationToken);
+            await EnsurePduModeAsync(serialPort, cancellationToken);
 
             var statusArg = status switch
             {
-                SmsMessageStatus.ReceivedUnread => "\"REC UNREAD\"",
-                SmsMessageStatus.ReceivedRead => "\"REC READ\"",
-                SmsMessageStatus.StoredUnsent => "\"STO UNSENT\"",
-                SmsMessageStatus.StoredSent => "\"STO SENT\"",
-                _ => "\"ALL\""
+                SmsMessageStatus.ReceivedUnread => "0",
+                SmsMessageStatus.ReceivedRead => "1",
+                SmsMessageStatus.StoredUnsent => "2",
+                SmsMessageStatus.StoredSent => "3",
+                _ => "4"
             };
 
             var lines = await ExecuteAtCommandWithOpenPortAsync(serialPort, $"AT+CMGL={statusArg}", cancellationToken);
-            return ParseCmgl(lines);
+            var raw = ParseCmglPdu(lines);
+            return ReassembleMessages(raw);
         }
         finally
         {
@@ -252,10 +272,10 @@ public sealed class SmsService(IOptions<SmsServiceOptions> options, ILogger<SmsS
         {
             using var serialPort = CreatePort();
             serialPort.Open();
-            await EnsureTextModeAsync(serialPort, cancellationToken);
+            await EnsurePduModeAsync(serialPort, cancellationToken);
 
             var lines = await ExecuteAtCommandWithOpenPortAsync(serialPort, $"AT+CMGR={index}", cancellationToken);
-            return ParseCmgr(lines, index);
+            return ParseCmgrPdu(lines, index);
         }
         finally
         {
@@ -275,14 +295,19 @@ public sealed class SmsService(IOptions<SmsServiceOptions> options, ILogger<SmsS
             throw new ArgumentOutOfRangeException(nameof(index));
         }
 
-        var response = await ExecuteAtCommandAsync($"AT+CMGD={index}", cancellationToken);
-        EnsureNoError(response);
+        var indices = _lastIndexGroups.TryGetValue(index, out var group) ? group : [index];
+        foreach (var i in indices)
+        {
+            var response = await ExecuteAtCommandAsync($"AT+CMGD={i}", cancellationToken);
+            EnsureNoError(response);
+        }
     }
 
     public async Task<int> DeleteAllMessagesAsync(CancellationToken cancellationToken = default)
     {
         var response = await ExecuteAtCommandAsync("AT+CMGD=1,4", cancellationToken);
         EnsureNoError(response);
+        _lastIndexGroups = new Dictionary<int, int[]>();
 
         var countLine = response.FirstOrDefault(x => x.StartsWith("+CMGD:", StringComparison.OrdinalIgnoreCase));
         if (countLine is null)
@@ -341,13 +366,44 @@ public sealed class SmsService(IOptions<SmsServiceOptions> options, ILogger<SmsS
         await Task.Run(() => port.Write(value + "\r"), cancellationToken);
     }
 
-    private async Task EnsureTextModeAsync(SerialPort serialPort, CancellationToken cancellationToken)
+    private async Task EnsurePduModeAsync(SerialPort serialPort, CancellationToken cancellationToken)
     {
         await ExecuteAtCommandWithOpenPortAsync(serialPort, "ATE0", cancellationToken);
         await ExecuteAtCommandWithOpenPortAsync(serialPort, "AT+CMEE=2", cancellationToken);
-        await ExecuteAtCommandWithOpenPortAsync(serialPort, "AT+CSCS=\"GSM\"", cancellationToken);
-        await ExecuteAtCommandWithOpenPortAsync(serialPort, "AT+CMGF=1", cancellationToken);
+        await ExecuteAtCommandWithOpenPortAsync(serialPort, "AT+CMGF=0", cancellationToken);
         await ExecuteAtCommandWithOpenPortAsync(serialPort, "AT+CPMS=\"SM\",\"SM\",\"SM\"", cancellationToken);
+    }
+
+    /// <summary>
+    /// Actively scans for the literal '&gt;' data-entry prompt that AT+CMGS emits before it will accept
+    /// the PDU/message body. Different modem firmwares emit this prompt after very different delays, so
+    /// a fixed blind wait (the previous approach) was a reliability landmine; scanning for the real byte
+    /// makes sending robust across modem models.
+    /// </summary>
+    private async Task WaitForPromptAsync(SerialPort serialPort, CancellationToken cancellationToken)
+    {
+        var timeout = TimeSpan.FromMilliseconds(_options.CommandTimeoutMs);
+        var started = DateTime.UtcNow;
+        var buffer = new StringBuilder();
+
+        while (DateTime.UtcNow - started < timeout)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var chunk = await Task.Run(serialPort.ReadExisting, cancellationToken);
+            if (!string.IsNullOrEmpty(chunk))
+            {
+                buffer.Append(chunk);
+                if (buffer.ToString().Contains('>'))
+                {
+                    return;
+                }
+            }
+
+            await Task.Delay(25, cancellationToken);
+        }
+
+        throw new TimeoutException($"Modem did not present the '>' data-entry prompt on port '{_options.PortName}' before timeout.");
     }
 
     private async Task<IReadOnlyList<string>> ReadUntilTerminalAsync(SerialPort serialPort, CancellationToken cancellationToken)
@@ -421,9 +477,18 @@ public sealed class SmsService(IOptions<SmsServiceOptions> options, ILogger<SmsS
         }
     }
 
-    private static IReadOnlyList<SmsMessage> ParseCmgl(IReadOnlyList<string> lines)
+    private static string StatusName(string stat) => stat switch
     {
-        var messages = new List<SmsMessage>();
+        "0" => "REC UNREAD",
+        "1" => "REC READ",
+        "2" => "STO UNSENT",
+        "3" => "STO SENT",
+        _ => stat
+    };
+
+    private IReadOnlyList<RawPduMessage> ParseCmglPdu(IReadOnlyList<string> lines)
+    {
+        var messages = new List<RawPduMessage>();
         for (var i = 0; i < lines.Count; i++)
         {
             var line = lines[i];
@@ -432,114 +497,134 @@ public sealed class SmsService(IOptions<SmsServiceOptions> options, ILogger<SmsS
                 continue;
             }
 
-            var match = CmglHeaderRegex.Match(line);
-            var bodyLines = new List<string>();
-            var bodyIndex = i + 1;
-            while (bodyIndex < lines.Count
-                   && !lines[bodyIndex].StartsWith("+CMGL:", StringComparison.OrdinalIgnoreCase)
-                   && !IsTerminalResponse(lines[bodyIndex]))
+            var match = CmglPduHeaderRegex.Match(line);
+            if (!match.Success || i + 1 >= lines.Count)
             {
-                bodyLines.Add(lines[bodyIndex]);
-                bodyIndex++;
+                continue;
             }
 
-            var body = GsmAlphabet.Decode(string.Join("\n", bodyLines));
-            if (match.Success)
+            var index = int.Parse(match.Groups["index"].Value, CultureInfo.InvariantCulture);
+            var stat = match.Groups["stat"].Value;
+            var pduLine = lines[i + 1];
+
+            try
             {
-                messages.Add(new SmsMessage
-                {
-                    Index = int.Parse(match.Groups["index"].Value, CultureInfo.InvariantCulture),
-                    Status = match.Groups["status"].Value,
-                    Originator = match.Groups["from"].Value,
-                    Timestamp = ParseTimestamp(match.Groups["date"].Value),
-                    Body = body,
-                    RawHeader = line
-                });
+                var deliver = DecodeDeliverPdu(pduLine);
+                messages.Add(new RawPduMessage(index, StatusName(stat), deliver));
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to parse PDU for message at index {Index}; skipping it.", index);
             }
 
-            i = bodyIndex - 1;
+            i++;
         }
 
         return messages;
     }
 
-    private static SmsMessage? ParseCmgr(IReadOnlyList<string> lines, int index)
+    private SmsMessage? ParseCmgrPdu(IReadOnlyList<string> lines, int index)
     {
-        var header = lines.FirstOrDefault(x => x.StartsWith("+CMGR:", StringComparison.OrdinalIgnoreCase));
-        if (header is null)
-        {
-            return null;
-        }
-
         var headerIndex = -1;
+        var match = Match.Empty;
         for (var i = 0; i < lines.Count; i++)
         {
-            if (ReferenceEquals(lines[i], header) || string.Equals(lines[i], header, StringComparison.Ordinal))
+            var m = CmgrPduHeaderRegex.Match(lines[i]);
+            if (m.Success)
             {
                 headerIndex = i;
+                match = m;
                 break;
             }
         }
 
-        if (headerIndex < 0)
+        if (headerIndex < 0 || headerIndex + 1 >= lines.Count)
         {
             return null;
         }
-        var bodyLines = new List<string>();
-        var bodyIndex = headerIndex + 1;
-        while (bodyIndex < lines.Count && !IsTerminalResponse(lines[bodyIndex]))
-        {
-            bodyLines.Add(lines[bodyIndex]);
-            bodyIndex++;
-        }
 
-        var body = GsmAlphabet.Decode(string.Join("\n", bodyLines));
-        var match = CmgrLineRegex.Match(header);
+        var stat = match.Groups["stat"].Value;
+        var pduLine = lines[headerIndex + 1];
 
-        if (!match.Success)
+        try
         {
+            var deliver = DecodeDeliverPdu(pduLine);
             return new SmsMessage
             {
                 Index = index,
-                Status = "Unknown",
-                Body = body,
-                RawHeader = header
+                Status = StatusName(stat),
+                Originator = deliver.SenderNumber?.ToString(),
+                Timestamp = deliver.Timestamp,
+                Body = deliver.Message,
+                RawHeader = lines[headerIndex]
             };
         }
-
-        return new SmsMessage
+        catch (Exception ex)
         {
-            Index = index,
-            Status = match.Groups["status"].Value,
-            Originator = match.Groups["from"].Value,
-            Timestamp = ParseTimestamp(match.Groups["date"].Value),
-            Body = body,
-            RawHeader = header
-        };
-    }
-
-    private static DateTimeOffset? ParseTimestamp(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
+            logger.LogWarning(ex, "Failed to parse PDU for message at index {Index}.", index);
             return null;
         }
+    }
 
-        var parsed = value;
-        var tzMatch = Regex.Match(parsed, "([+-]\\d{2})$");
-        if (tzMatch.Success)
+    private static SmsDeliver DecodeDeliverPdu(string hexPdu)
+    {
+        var bytes = Convert.FromHexString(hexPdu.Trim());
+        return SmsDecoder.Decode(bytes) as SmsDeliver
+            ?? throw new InvalidOperationException("PDU is not an SMS-DELIVER message.");
+    }
+
+    /// <summary>
+    /// Groups raw SIM entries into logical messages: single-part messages pass through unchanged,
+    /// while parts belonging to the same concatenated (UDH) message are ordered by sequence number and
+    /// merged into one SmsMessage with the combined body. The resulting index-group map lets
+    /// DeleteMessageAsync remove every SIM slot for a reassembled message, not just its first part.
+    /// </summary>
+    private IReadOnlyList<SmsMessage> ReassembleMessages(IReadOnlyList<RawPduMessage> raw)
+    {
+        var indexGroups = new Dictionary<int, int[]>();
+        var result = new List<SmsMessage>();
+
+        foreach (var r in raw.Where(r => r.Deliver.TotalNumberOfParts <= 1))
         {
-            var tzQuarterHours = int.Parse(tzMatch.Groups[1].Value, CultureInfo.InvariantCulture);
-            var tzHours = tzQuarterHours / 4;
-            var minutes = Math.Abs(tzQuarterHours % 4) * 15;
-            var sign = tzQuarterHours >= 0 ? "+" : "-";
-            parsed = parsed[..^3] + $"{sign}{Math.Abs(tzHours):00}:{minutes:00}";
+            indexGroups[r.Index] = [r.Index];
+            result.Add(new SmsMessage
+            {
+                Index = r.Index,
+                Status = r.Status,
+                Originator = r.Deliver.SenderNumber?.ToString(),
+                Timestamp = r.Deliver.Timestamp,
+                Body = r.Deliver.Message,
+                RawHeader = $"+CMGL: {r.Index},{r.Status}"
+            });
         }
 
-        return DateTimeOffset.TryParseExact(parsed, "yy/MM/dd,HH:mm:sszzz", CultureInfo.InvariantCulture, DateTimeStyles.None, out var dto)
-            ? dto
-            : null;
+        var grouped = raw.Where(r => r.Deliver.TotalNumberOfParts > 1)
+            .GroupBy(r => (r.Deliver.SenderNumber?.ToString(), r.Deliver.MessageReference, r.Deliver.TotalNumberOfParts));
+
+        foreach (var group in grouped)
+        {
+            var ordered = group.OrderBy(r => r.Deliver.PartNumber).ToList();
+            var representativeIndex = ordered[0].Index;
+            var allIndices = ordered.Select(r => r.Index).ToArray();
+            indexGroups[representativeIndex] = allIndices;
+
+            var first = ordered[0];
+            result.Add(new SmsMessage
+            {
+                Index = representativeIndex,
+                Status = first.Status,
+                Originator = first.Deliver.SenderNumber?.ToString(),
+                Timestamp = first.Deliver.Timestamp,
+                Body = string.Concat(ordered.Select(r => r.Deliver.Message)),
+                RawHeader = $"+CMGL: {representativeIndex},{first.Status} (parts: {string.Join(',', allIndices)})"
+            });
+        }
+
+        _lastIndexGroups = indexGroups;
+        return result;
     }
+
+    private sealed record RawPduMessage(int Index, string Status, SmsDeliver Deliver);
 
     private SerialPort CreatePort()
     {
@@ -604,63 +689,4 @@ public sealed class SmsServiceOptions
     public int CommandTimeoutMs { get; set; } = 10000;
     public int ReadTimeoutMs { get; set; } = 5000;
     public int WriteTimeoutMs { get; set; } = 5000;
-    public int PromptDelayMs { get; set; } = 400;
-}
-
-/// <summary>
-/// Converts between .NET strings and the GSM 03.38 (3GPP TS 23.038) default alphabet
-/// used by the modem's AT+CMGF=1 text mode when AT+CSCS="GSM" is selected. Most letters,
-/// digits and punctuation share the same code points as ASCII, but Danish characters
-/// (æ, ø, å and their uppercase forms) sit at control-code positions (0x0B-0x1D) that
-/// .NET's Encoding.ASCII silently replaces with '?' if sent as plain text.
-/// </summary>
-internal static class GsmAlphabet
-{
-    private static readonly char[] BasicTable =
-    [
-        '@', '£', '$', '¥', 'è', 'é', 'ù', 'ì', 'ò', 'Ç', '\n', 'Ø', 'ø', '\r', 'Å', 'å',
-        'Δ', '_', 'Φ', 'Γ', 'Λ', 'Ω', 'Π', 'Ψ', 'Σ', 'Θ', 'Ξ', '', 'Æ', 'æ', 'ß', 'É',
-        ' ', '!', '"', '#', '¤', '%', '&', '\'', '(', ')', '*', '+', ',', '-', '.', '/',
-        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', ':', ';', '<', '=', '>', '?',
-        '¡', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O',
-        'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'Ä', 'Ö', 'Ñ', 'Ü', '§',
-        '¿', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o',
-        'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'ä', 'ö', 'ñ', 'ü', 'à'
-    ];
-
-    private static readonly Dictionary<char, byte> CharToByte = BuildReverseLookup();
-
-    private static Dictionary<char, byte> BuildReverseLookup()
-    {
-        var map = new Dictionary<char, byte>(BasicTable.Length);
-        for (var i = 0; i < BasicTable.Length; i++)
-        {
-            map[BasicTable[i]] = (byte)i;
-        }
-
-        return map;
-    }
-
-    public static byte[] Encode(string text)
-    {
-        var bytes = new byte[text.Length];
-        for (var i = 0; i < text.Length; i++)
-        {
-            bytes[i] = CharToByte.TryGetValue(text[i], out var value) ? value : (byte)'?';
-        }
-
-        return bytes;
-    }
-
-    public static string Decode(string raw)
-    {
-        var chars = new char[raw.Length];
-        for (var i = 0; i < raw.Length; i++)
-        {
-            var code = raw[i];
-            chars[i] = code < BasicTable.Length ? BasicTable[code] : code;
-        }
-
-        return new string(chars);
-    }
 }
