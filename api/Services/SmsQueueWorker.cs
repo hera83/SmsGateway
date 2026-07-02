@@ -53,7 +53,13 @@ public sealed class SmsQueueWorker(IServiceScopeFactory serviceScopeFactory, ILo
         sms.Status = SmsRecordStatuses.Sending;
         sms.ProcessingStartedAt = DateTime.Now;
         sms.UpdatedAt = DateTime.Now;
-        await dbContext.SaveChangesAsync(cancellationToken);
+
+        if (!await dbContext.TrySaveChangesWithRetryAsync(logger, maxAttempts: 3, cancellationToken))
+        {
+            // Nothing was sent yet, so the record is safely left as Queued and picked up again next poll.
+            logger.LogError("Could not mark SMS {SmsId} as Sending; it will be retried on the next poll.", sms.Id);
+            return true;
+        }
 
         var smsService = scope.ServiceProvider.GetRequiredService<ISmsService>();
 
@@ -79,7 +85,16 @@ public sealed class SmsQueueWorker(IServiceScopeFactory serviceScopeFactory, ILo
             }
 
             sms.UpdatedAt = DateTime.Now;
-            await dbContext.SaveChangesAsync(cancellationToken);
+
+            // The modem call above already succeeded — the SMS is out. A failure to persist that
+            // fact must never fall into the catch block below and get recorded as Failed, or the
+            // caller will see a false failure, resend, and the recipient gets the message twice.
+            if (!await dbContext.TrySaveChangesWithRetryAsync(logger, maxAttempts: 5, cancellationToken))
+            {
+                logger.LogCritical(
+                    "SMS {SmsId} was sent to the modem (reference {ModemReference}) but the Sent status could not be persisted after retries. Record remains {Status} in the database and needs manual reconciliation.",
+                    sms.Id, sms.ModemReference, SmsRecordStatuses.Sending);
+            }
         }
         catch (Exception ex)
         {
@@ -89,7 +104,7 @@ public sealed class SmsQueueWorker(IServiceScopeFactory serviceScopeFactory, ILo
             sms.FailedAt = DateTime.Now;
             sms.FailureReason = ex.Message;
             sms.UpdatedAt = DateTime.Now;
-            await dbContext.SaveChangesAsync(cancellationToken);
+            await dbContext.TrySaveChangesWithRetryAsync(logger, maxAttempts: 5, cancellationToken);
         }
 
         return true;

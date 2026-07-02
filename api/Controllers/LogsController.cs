@@ -12,9 +12,9 @@ namespace api.Controllers;
 [Authorize(Policy = "MasterKeyOnly")]
 public class LogsController : ControllerBase
 {
-    private readonly AppDbContext _dbContext;
+    private readonly LogDbContext _dbContext;
 
-    public LogsController(AppDbContext dbContext)
+    public LogsController(LogDbContext dbContext)
     {
         _dbContext = dbContext;
     }

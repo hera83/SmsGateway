@@ -28,6 +28,9 @@ var environmentBadge = $"![Environment]({environmentBadgeUrl})";
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+builder.Services.AddDbContext<LogDbContext>(options =>
+    options.UseSqlite(builder.Configuration.GetConnectionString("LogsConnection")));
+
 builder.Services.AddSingleton<AppDbLogEventSink>();
 builder.Services.Configure<SmsServiceOptions>(builder.Configuration.GetSection("SmsService"));
 builder.Services.PostConfigure<SmsServiceOptions>(options =>
@@ -220,24 +223,12 @@ Directory.CreateDirectory(Path.Combine(app.Environment.ContentRootPath, "App_dbs
 
 using (var scope = app.Services.CreateScope())
 {
-    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    MigrateSqliteContext(scope.ServiceProvider.GetRequiredService<AppDbContext>(), app.Environment.ContentRootPath);
 
-    if (dbContext.Database.IsSqlite())
-    {
-        var dbFilePath = GetSqliteDataSourcePath(dbContext.Database.GetDbConnection().ConnectionString, app.Environment.ContentRootPath);
-        if (!string.IsNullOrWhiteSpace(dbFilePath) && !File.Exists(dbFilePath))
-        {
-            var directory = Path.GetDirectoryName(dbFilePath);
-            if (!string.IsNullOrWhiteSpace(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
-        }
-
-        ResetSqliteMigrationLock(dbContext);
-    }
-
-    dbContext.Database.Migrate();
+    // LogEntries live in their own SQLite file so the AppDbLogEventSink's frequent, synchronous
+    // writes (one per log event, including per HTTP request) never lock-contend with SmsRecord/
+    // ApiKey writes from SmsController, SmsQueueWorker and SmsInboxWorker.
+    MigrateSqliteContext(scope.ServiceProvider.GetRequiredService<LogDbContext>(), app.Environment.ContentRootPath);
 }
 
 app.UseSwagger();
@@ -263,6 +254,36 @@ app.MapControllers();
 
 app.Run();
 
+static void MigrateSqliteContext<TContext>(TContext dbContext, string contentRootPath) where TContext : DbContext
+{
+    if (dbContext.Database.IsSqlite())
+    {
+        var dbFilePath = GetSqliteDataSourcePath(dbContext.Database.GetDbConnection().ConnectionString, contentRootPath);
+        if (!string.IsNullOrWhiteSpace(dbFilePath) && !File.Exists(dbFilePath))
+        {
+            var directory = Path.GetDirectoryName(dbFilePath);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+        }
+
+        ResetSqliteMigrationLock(dbContext);
+    }
+
+    dbContext.Database.Migrate();
+
+    if (dbContext.Database.IsSqlite())
+    {
+        // WAL lets concurrent readers/writers (SmsQueueWorker, SmsInboxWorker, web requests,
+        // and the log sink) access the same SQLite file without "database is locked" errors
+        // from the default rollback journal — this is what previously caused a successful
+        // modem send to be recorded as a failed SmsRecord, which made the caller resend and
+        // duplicate the SMS.
+        dbContext.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
+    }
+}
+
 static string? GetSqliteDataSourcePath(string? connectionString, string contentRootPath)
 {
     if (string.IsNullOrWhiteSpace(connectionString))
@@ -281,7 +302,7 @@ static string? GetSqliteDataSourcePath(string? connectionString, string contentR
         : Path.Combine(contentRootPath, builder.DataSource);
 }
 
-static void ResetSqliteMigrationLock(AppDbContext dbContext)
+static void ResetSqliteMigrationLock(DbContext dbContext)
 {
     try
     {

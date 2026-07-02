@@ -197,7 +197,12 @@ public sealed class SmsInboxWorker(
                 SentAt = DateTime.Now
             });
 
-            await dbContext.SaveChangesAsync(cancellationToken);
+            // The auto-reply was already sent via the modem above, so a persistence failure here
+            // only loses the local record of it — it must not be retried as a send.
+            if (!await dbContext.TrySaveChangesWithRetryAsync(logger, maxAttempts: 5, cancellationToken))
+            {
+                logger.LogError("Auto-reply to {PhoneNumber} was sent via the modem but could not be persisted after retries.", toNumber);
+            }
         }
         catch (Exception ex)
         {

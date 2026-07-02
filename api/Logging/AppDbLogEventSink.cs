@@ -31,7 +31,7 @@ public class AppDbLogEventSink : ILogEventSink
             _isEmitting = true;
 
             using var scope = _scopeFactory.CreateScope();
-            using var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            using var db = scope.ServiceProvider.GetRequiredService<LogDbContext>();
 
             var sourceContext = logEvent.Properties.TryGetValue("SourceContext", out var source)
                 ? source.ToString().Trim('"')

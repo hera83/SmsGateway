@@ -13,7 +13,6 @@ public class AppDbContext : IdentityDbContext<IdentityUser<Guid>, IdentityRole<G
     }
 
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
-    public DbSet<LogEntry> LogEntries => Set<LogEntry>();
     public DbSet<CostConfiguration> CostConfigurations => Set<CostConfiguration>();
     public DbSet<CostPriceHistory> CostPriceHistories => Set<CostPriceHistory>();
     public DbSet<SmsRecord> SmsRecords => Set<SmsRecord>();
@@ -59,19 +58,6 @@ public class AppDbContext : IdentityDbContext<IdentityUser<Guid>, IdentityRole<G
             entity.Property(x => x.CreatedAt).HasColumnName("CreatedAtUtc");
             entity.Property(x => x.UpdatedAt).HasColumnName("UpdatedAtUtc");
             entity.HasIndex(x => x.Name).IsUnique();
-        });
-
-        builder.Entity<LogEntry>(entity =>
-        {
-            entity.HasKey(x => x.Id);
-            entity.Property(x => x.Timestamp).HasColumnName("TimestampUtc").IsRequired();
-            entity.Property(x => x.Level).IsRequired().HasMaxLength(32);
-            entity.Property(x => x.Message).IsRequired();
-            entity.Property(x => x.MessageTemplate).HasMaxLength(4000);
-            entity.Property(x => x.SourceContext).HasMaxLength(512);
-            entity.Property(x => x.PropertiesJson).HasMaxLength(16000);
-            entity.HasIndex(x => x.Timestamp);
-            entity.HasIndex(x => x.Level);
         });
 
         builder.Entity<CostConfiguration>(entity =>
