@@ -167,6 +167,16 @@ public sealed class SmsInboxWorker(
 
             var client = httpClientFactory.CreateClient("Webhook");
             var response = await client.PostAsJsonAsync(webhookUrl, payload, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+                logger.LogWarning(
+                    "Webhook to {WebhookUrl} responded with {StatusCode}: {ResponseBody}",
+                    webhookUrl,
+                    (int)response.StatusCode,
+                    responseBody);
+            }
+
             return response.IsSuccessStatusCode;
         }
         catch (Exception ex)
