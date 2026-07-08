@@ -422,12 +422,32 @@ public class SubscriptionsController(AppDbContext dbContext) : ControllerBase
         subscription.WebhookUrl = string.IsNullOrWhiteSpace(request.WebhookUrl) ? null : request.WebhookUrl.Trim();
         subscription.UpdatedAt = DateTime.Now;
 
-        dbContext.RemoveRange(subscription.Numbers);
-        subscription.Numbers = normalizedNumbers.Select(n => new SubscriptionNumber
+        // Muter den allerede trackede Numbers-collection i stedet for at RemoveRange + gentildele den:
+        // reassigning navigation-property'en på en tracked entity efter RemoveRange forvirrer EF Core's
+        // change tracker og udløser "expected to affect 1 row(s), but actually affected 0 row(s)".
+        var existingNumbers = subscription.Numbers.ToList();
+
+        foreach (var toRemove in existingNumbers.Where(n => !normalizedNumbers.Contains(n.PhoneNumber)))
         {
-            Id = Guid.NewGuid(),
-            PhoneNumber = n
-        }).ToList();
+            subscription.Numbers.Remove(toRemove);
+        }
+
+        // Nye SubscriptionNumber-entiteter skal tilføjes via DbContext, ikke kun navigation-collection'en:
+        // når nøglen (Id) sættes manuelt og entiteten kun opdages via relationship-fixup i DetectChanges,
+        // antager EF Core at rækken allerede findes og genererer en UPDATE i stedet for en INSERT, hvilket
+        // udløser samme "0 rows affected"-fejl.
+        foreach (var toAdd in normalizedNumbers.Where(n => existingNumbers.All(existing => existing.PhoneNumber != n)))
+        {
+            var newNumber = new SubscriptionNumber
+            {
+                Id = Guid.NewGuid(),
+                SubscriptionId = subscription.Id,
+                PhoneNumber = toAdd
+            };
+
+            dbContext.SubscriptionNumbers.Add(newNumber);
+            subscription.Numbers.Add(newNumber);
+        }
 
         await dbContext.SaveChangesAsync(cancellationToken);
 
