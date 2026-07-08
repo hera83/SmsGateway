@@ -64,9 +64,15 @@ public class SubscriptionsController(ISmsService smsService) : Controller
             TargetApiKeyId = model.ApiKeyId
         };
 
-        var result = await smsService.CreateSubscriptionAsync(request);
-        TempData[result is not null ? "Success" : "Error"] =
-            result is not null ? "Abonnement oprettet." : "Abonnement kunne ikke oprettes.";
+        try
+        {
+            await smsService.CreateSubscriptionAsync(request);
+            TempData["Success"] = "Abonnement oprettet.";
+        }
+        catch (HttpRequestException ex)
+        {
+            TempData["Error"] = ex.Extract("Abonnement kunne ikke oprettes.");
+        }
 
         return RedirectToAction(nameof(Index));
     }
@@ -96,9 +102,15 @@ public class SubscriptionsController(ISmsService smsService) : Controller
             WebhookUrl = string.IsNullOrWhiteSpace(model.WebhookUrl) ? null : model.WebhookUrl.Trim()
         };
 
-        var result = await smsService.UpdateSubscriptionAsync(model.Id, request);
-        TempData[result is not null ? "Success" : "Error"] =
-            result is not null ? "Abonnement opdateret." : "Abonnement kunne ikke opdateres.";
+        try
+        {
+            await smsService.UpdateSubscriptionAsync(model.Id, request);
+            TempData["Success"] = "Abonnement opdateret.";
+        }
+        catch (HttpRequestException ex)
+        {
+            TempData["Error"] = ex.Extract("Abonnement kunne ikke opdateres.");
+        }
 
         return RedirectToAction(nameof(Index));
     }
@@ -107,8 +119,16 @@ public class SubscriptionsController(ISmsService smsService) : Controller
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> Delete(Guid id)
     {
-        var deleted = await smsService.DeleteSubscriptionAsync(id);
-        TempData[deleted ? "Success" : "Error"] = deleted ? "Abonnement slettet." : "Abonnement ikke fundet.";
+        try
+        {
+            var deleted = await smsService.DeleteSubscriptionAsync(id);
+            TempData[deleted ? "Success" : "Error"] = deleted ? "Abonnement slettet." : "Abonnement ikke fundet.";
+        }
+        catch (HttpRequestException ex)
+        {
+            TempData["Error"] = ex.Extract("Abonnement kunne ikke slettes.");
+        }
+
         return RedirectToAction(nameof(Index));
     }
 

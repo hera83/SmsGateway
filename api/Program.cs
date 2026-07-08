@@ -46,6 +46,7 @@ builder.Services.PostConfigure<SmsServiceOptions>(options =>
     }
 });
 builder.Services.AddSingleton<ISmsService, SmsService>();
+builder.Services.AddSingleton<IWebhookSender, WebhookSender>();
 builder.Services.AddHostedService<SmsQueueWorker>();
 builder.Services.AddHostedService<SmsInboxWorker>();
 builder.Services.AddHttpClient("Webhook");

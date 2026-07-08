@@ -170,6 +170,11 @@ namespace web.Services.SmsService
             return DeleteAsync($"api/Sms/Delete/{id}", apiKey, cancellationToken);
         }
 
+        public Task<RetryWebhookSmsResponseDto?> RetryWebhookAsync(Guid id, string? apiKey = null, CancellationToken cancellationToken = default)
+        {
+            return SendAsync<RetryWebhookSmsResponseDto>(HttpMethod.Post, $"api/Sms/RetryWebhook/{id}", null, apiKey, cancellationToken);
+        }
+
         public Task<SmsDeviceInfoResponseDto?> GetSmsDeviceInfoAsync(string? apiKey = null, CancellationToken cancellationToken = default)
         {
             return SendAsync<SmsDeviceInfoResponseDto>(HttpMethod.Get, "api/Sms/DeviceInfo", null, apiKey, cancellationToken);

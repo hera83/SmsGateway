@@ -1,4 +1,3 @@
-using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using api.Data;
@@ -11,7 +10,7 @@ namespace api.Services;
 
 public sealed class SmsInboxWorker(
     IServiceScopeFactory serviceScopeFactory,
-    IHttpClientFactory httpClientFactory,
+    IWebhookSender webhookSender,
     ILogger<SmsInboxWorker> logger) : BackgroundService
 {
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(3);
@@ -141,48 +140,31 @@ public sealed class SmsInboxWorker(
             // Send til webhook hvis URL er konfigureret
             if (!string.IsNullOrWhiteSpace(activeSubscription.WebhookUrl))
             {
-                var delivered = await TrySendWebhookAsync(activeSubscription.WebhookUrl, message, cancellationToken);
-                if (delivered)
+                var payload = new
+                {
+                    index = message.Index,
+                    status = message.Status,
+                    originator = message.Originator,
+                    timestamp = message.Timestamp,
+                    body = message.Body
+                };
+
+                var result = await webhookSender.SendAsync(activeSubscription.WebhookUrl, payload, cancellationToken);
+                if (result.Success)
                 {
                     // SMS leveret via webhook – fjern fra DB
                     dbContext.SmsRecords.Remove(record);
-                    await dbContext.SaveChangesAsync(cancellationToken);
                 }
+                else
+                {
+                    // Behold posten så den kan genudløses fra adm-modulet, når webhooket er rettet.
+                    record.Status = SmsRecordStatuses.WebhookFailed;
+                    record.FailureReason = result.FailureReason;
+                    record.UpdatedAt = DateTime.Now;
+                }
+
+                await dbContext.SaveChangesAsync(cancellationToken);
             }
-        }
-    }
-
-    private async Task<bool> TrySendWebhookAsync(string webhookUrl, SmsMessage message, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var payload = new
-            {
-                index = message.Index,
-                status = message.Status,
-                originator = message.Originator,
-                timestamp = message.Timestamp,
-                body = message.Body
-            };
-
-            var client = httpClientFactory.CreateClient("Webhook");
-            var response = await client.PostAsJsonAsync(webhookUrl, payload, cancellationToken);
-            if (!response.IsSuccessStatusCode)
-            {
-                var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
-                logger.LogWarning(
-                    "Webhook to {WebhookUrl} responded with {StatusCode}: {ResponseBody}",
-                    webhookUrl,
-                    (int)response.StatusCode,
-                    responseBody);
-            }
-
-            return response.IsSuccessStatusCode;
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Failed to send webhook to {WebhookUrl}.", webhookUrl);
-            return false;
         }
     }
 

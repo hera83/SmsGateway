@@ -48,3 +48,5 @@ public sealed class SmsMessage
     public string Body { get; init; } = string.Empty;
     public string RawHeader { get; init; } = string.Empty;
 }
+
+public sealed record WebhookSendResult(bool Success, string? FailureReason);

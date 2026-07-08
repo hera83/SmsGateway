@@ -13,6 +13,7 @@ public static class SmsRecordStatuses
     public const string Sent = "Sent";
     public const string Failed = "Failed";
     public const string Received = "Received";
+    public const string WebhookFailed = "WebhookFailed";
 }
 
 public class SmsRecord

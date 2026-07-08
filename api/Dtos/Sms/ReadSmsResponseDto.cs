@@ -7,4 +7,6 @@ public sealed class ReadSmsResponseDto
     public string Body { get; init; } = string.Empty;
     public DateTime? ReceivedAt { get; init; }
     public string Status { get; init; } = string.Empty;
+    public bool WebhookFailed { get; init; }
+    public string? FailureReason { get; init; }
 }

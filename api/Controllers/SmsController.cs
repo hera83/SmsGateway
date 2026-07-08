@@ -15,7 +15,7 @@ namespace api.Controllers;
 [ApiController]
 [Route("api/[controller]/[action]")]
 [Authorize]
-public class SmsController(ISmsService smsService, AppDbContext dbContext, ILogger<SmsController> logger) : ControllerBase
+public class SmsController(ISmsService smsService, IWebhookSender webhookSender, AppDbContext dbContext, ILogger<SmsController> logger) : ControllerBase
 {
     private static readonly Regex DanishPhoneRegex = new("^[2-9][0-9]{7}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private const int StandardSmsLength = 160;
@@ -207,7 +207,9 @@ public class SmsController(ISmsService smsService, AppDbContext dbContext, ILogg
                 Status = x.Status,
                 FromPhoneNumber = x.FromPhoneNumber,
                 ReceivedAt = x.ReceivedAt ?? x.CreatedAt,
-                Body = x.Message
+                Body = x.Message,
+                WebhookFailed = x.Status == SmsRecordStatuses.WebhookFailed,
+                FailureReason = x.FailureReason
             })
             .ToListAsync(cancellationToken);
 
@@ -247,6 +249,101 @@ public class SmsController(ISmsService smsService, AppDbContext dbContext, ILogg
         return Ok(info);
     }
 
+    [HttpPost("{id:guid}")]
+    [ProducesResponseType(typeof(RetryWebhookSmsResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(BadRequestErrorDto), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(NotFoundErrorDto), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ForbiddenErrorDto), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(InternalServerErrorDto), StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<RetryWebhookSmsResponseDto>> RetryWebhook([FromRoute] Guid id, CancellationToken cancellationToken)
+    {
+        var currentApiKeyId = TryGetApiKeyId();
+        var isMasterKey = IsMasterKey();
+
+        var record = await dbContext.SmsRecords
+            .Where(x => x.Id == id && x.Direction == SmsRecordDirections.Incoming)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (record is null)
+        {
+            return NotFound(new NotFoundErrorDto
+            {
+                Message = "SMS message not found.",
+                TraceId = HttpContext.TraceIdentifier
+            });
+        }
+
+        if (!isMasterKey && record.ApiKeyId != currentApiKeyId)
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(record.FromPhoneNumber))
+        {
+            return BadRequest(new BadRequestErrorDto
+            {
+                Message = "This message has no sender number to resolve a webhook for.",
+                TraceId = HttpContext.TraceIdentifier
+            });
+        }
+
+        // Slå aktiv subscription op på ny, så en netop rettet webhook-URL eller ejer bruges frem for de data der var gældende da SMS'en oprindeligt blev modtaget.
+        var today = DateOnly.FromDateTime(DateTime.Now);
+        var activeSubscription = await dbContext.SubscriptionNumbers
+            .Where(sn =>
+                sn.PhoneNumber == record.FromPhoneNumber &&
+                sn.Subscription.StartDate <= today &&
+                sn.Subscription.EndDate >= today)
+            .Select(sn => new
+            {
+                sn.Subscription.ApiKeyId,
+                sn.Subscription.WebhookUrl
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (activeSubscription is null || string.IsNullOrWhiteSpace(activeSubscription.WebhookUrl))
+        {
+            return BadRequest(new BadRequestErrorDto
+            {
+                Message = "No active subscription with a webhook URL is currently configured for this number.",
+                TraceId = HttpContext.TraceIdentifier
+            });
+        }
+
+        record.ApiKeyId = activeSubscription.ApiKeyId;
+
+        var payload = new
+        {
+            originator = record.FromPhoneNumber,
+            timestamp = record.ReceivedAt,
+            body = record.Message
+        };
+
+        var result = await webhookSender.SendAsync(activeSubscription.WebhookUrl, payload, cancellationToken);
+
+        if (result.Success)
+        {
+            // Webhook leveret – fjern fra DB (SMS'en er allerede slettet fra SIM-kortet ved modtagelse).
+            dbContext.SmsRecords.Remove(record);
+        }
+        else
+        {
+            record.Status = SmsRecordStatuses.WebhookFailed;
+            record.FailureReason = result.FailureReason;
+            record.UpdatedAt = DateTime.Now;
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return Ok(new RetryWebhookSmsResponseDto
+        {
+            MessageId = id,
+            Delivered = result.Success,
+            WebhookUrl = activeSubscription.WebhookUrl,
+            FailureReason = result.FailureReason
+        });
+    }
+
     private static string NormalizePhone(string phone)
     {
         return phone.Trim().Replace(" ", string.Empty).Replace("-", string.Empty);
@@ -282,4 +379,6 @@ public class SmsController(ISmsService smsService, AppDbContext dbContext, ILogg
 
         return null;
     }
+
+    private bool IsMasterKey() => User.HasClaim("master_key", "true");
 }

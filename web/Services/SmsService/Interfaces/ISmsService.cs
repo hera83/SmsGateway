@@ -37,6 +37,7 @@ namespace web.Services.SmsService.Interfaces
         Task<UpdateSubscriptionsResponseDto?> UpdateSubscriptionAsync(Guid id, UpdateSubscriptionsRequestDto request, string? apiKey = null, CancellationToken cancellationToken = default);
         Task<bool> DeleteSubscriptionAsync(Guid id, string? apiKey = null, CancellationToken cancellationToken = default);
         Task<bool> DeleteSmsAsync(Guid id, string? apiKey = null, CancellationToken cancellationToken = default);
+        Task<RetryWebhookSmsResponseDto?> RetryWebhookAsync(Guid id, string? apiKey = null, CancellationToken cancellationToken = default);
         Task<SmsDeviceInfoResponseDto?> GetSmsDeviceInfoAsync(string? apiKey = null, CancellationToken cancellationToken = default);
     }
 }

@@ -81,14 +81,24 @@
                         <td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="@sms.Body">@sms.Body</td>
                         <td>
                             @{
-                                var sc = sms.Status switch { "Read" => "badge-soft-success", "Unread" => "badge-soft-info", _ => "badge-soft-warning" };
+                                var sc = sms.Status switch { "WebhookFailed" => "badge-soft-danger", "Read" => "badge-soft-success", "Unread" => "badge-soft-info", _ => "badge-soft-warning" };
                             }
-                            <span class="badge-soft @sc">@sms.Status</span>
+                            <span class="badge-soft @sc" title="@sms.FailureReason">@sms.Status</span>
                         </td>
                         <td style="color:var(--text-muted);font-size:12px;white-space:nowrap;">
                             @(sms.ReceivedAt?.ToString("dd/MM/yyyy HH:mm") ?? "–")
                         </td>
-                        <td class="text-end">
+                        <td class="text-end" style="white-space:nowrap;">
+                            @if (sms.WebhookFailed)
+                            {
+                                <form asp-action="RetryWebhook" method="post" class="d-inline">
+                                    @Html.AntiForgeryToken()
+                                    <input type="hidden" name="id" value="@sms.Id" />
+                                    <button type="submit" class="btn btn-secondary btn-sm" title="@sms.FailureReason">
+                                        Genudløs webhook
+                                    </button>
+                                </form>
+                            }
                             <button class="btn btn-danger btn-sm"
                                     data-bs-toggle="modal"
                                     data-bs-target="#deleteSmsModal"
